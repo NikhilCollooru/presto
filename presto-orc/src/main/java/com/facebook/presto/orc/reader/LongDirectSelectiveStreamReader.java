@@ -186,6 +186,7 @@ public class LongDirectSelectiveStreamReader
         }
 
         int streamPosition = 0;
+        long sum = 0;
 
         for (int i = 0; i < positionCount; i++) {
             int position = positions[i];
@@ -199,7 +200,8 @@ public class LongDirectSelectiveStreamReader
                 values[i] = 0;
             }
             else {
-                values[i] = dataStream.next();
+                sum += dataStream.next();
+                //values[i] = dataStream.next();
                 if (presentStream != null) {
                     nulls[i] = false;
                 }
@@ -208,7 +210,9 @@ public class LongDirectSelectiveStreamReader
             streamPosition++;
         }
 
-        outputPositionCount = positionCount;
+        values[0] = sum;
+        outputPositionCount = 1;
+        //outputPositionCount = positionCount;
         return streamPosition;
     }
 

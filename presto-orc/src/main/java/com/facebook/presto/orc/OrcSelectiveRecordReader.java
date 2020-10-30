@@ -718,7 +718,8 @@ public class OrcSelectiveRecordReader
                 blocks[i] = RunLengthEncodedBlock.create(columnTypes.get(columnIndex), constantValues[columnIndex] == NULL_MARKER ? null : constantValues[columnIndex], positionCount);
             }
             else if (!hasAnyFilter(columnIndex)) {
-                blocks[i] = new LazyBlock(positionCount, new OrcBlockLoader(getStreamReader(columnIndex), coercers[columnIndex], offset, positionsToRead, positionCount));
+                blocks[i] = new LazyBlock(1, new OrcBlockLoader(getStreamReader(columnIndex), coercers[columnIndex], offset, positionsToRead, positionCount));
+                //blocks[i] = new LazyBlock(positionCount, new OrcBlockLoader(getStreamReader(columnIndex), coercers[columnIndex], offset, positionsToRead, positionCount));
             }
             else {
                 Block block = getStreamReader(columnIndex).getBlock(positionsToRead, positionCount);
@@ -732,7 +733,8 @@ public class OrcSelectiveRecordReader
             }
         }
 
-        Page page = new Page(positionCount, blocks);
+        Page page = new Page(1, blocks);
+        //Page page = new Page(positionCount, blocks);
 
         validateWritePageChecksum(page);
 
@@ -918,7 +920,8 @@ public class OrcSelectiveRecordReader
                 throw new UncheckedIOException(e);
             }
 
-            Block block = reader.getBlock(positions, positionCount);
+            Block block = reader.getBlock(new int[0], 1);
+            //Block block = reader.getBlock(positions, positionCount);
             if (coercer != null) {
                 block = coercer.apply(block);
             }
