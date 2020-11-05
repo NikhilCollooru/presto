@@ -157,6 +157,7 @@ public class LongDirectSelectiveStreamReader
             throws IOException
     {
         if (positions[positionCount - 1] == positionCount - 1) {
+            long sum = 0;
             // no skipping
             if (presentStream != null) {
                 // some nulls
@@ -178,10 +179,13 @@ public class LongDirectSelectiveStreamReader
             else {
                 // no nulls
                 for (int i = 0; i < positionCount; i++) {
-                    values[i] = dataStream.next();
+                    //values[i] = dataStream.next();
+                    sum += dataStream.next();
                 }
             }
-            outputPositionCount = positionCount;
+            values[0] = sum;
+            outputPositionCount = 1;
+            //outputPositionCount = positionCount;
             return positionCount;
         }
 

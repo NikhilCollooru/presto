@@ -27,7 +27,6 @@ import com.facebook.presto.orc.stream.DoubleInputStream;
 import com.facebook.presto.orc.stream.InputStreamSource;
 import com.facebook.presto.orc.stream.InputStreamSources;
 import org.openjdk.jol.info.ClassLayout;
-import sun.misc.DoubleConsts;
 
 import javax.annotation.Nullable;
 
@@ -347,7 +346,7 @@ public class DoubleSelectiveStreamReader
 
         boolean includeNulls = nullsAllowed && presentStream != null;
         if (positionCount == outputPositionCount) {
-            Block block = new LongArrayBlock(positionCount, Optional.ofNullable(includeNulls ? nulls : null), new long[]{values[0]});
+            Block block = new LongArrayBlock(positionCount, Optional.ofNullable(includeNulls ? nulls : null), new long[] {values[0]});
             //Block block = new LongArrayBlock(positionCount, Optional.ofNullable(includeNulls ? nulls : null), values);
             nulls = null;
             values = null;
