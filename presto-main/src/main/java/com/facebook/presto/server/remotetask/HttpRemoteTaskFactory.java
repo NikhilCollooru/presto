@@ -76,11 +76,13 @@ public class HttpRemoteTaskFactory
     private final Codec<MetadataUpdates> metadataUpdatesCodec;
     private final Duration maxErrorDuration;
     private final Duration taskStatusRefreshMaxWait;
+    private final Duration taskStatusFetchInterval;
     private final Duration taskInfoRefreshMaxWait;
     private final Duration taskInfoUpdateInterval;
     private final ExecutorService coreExecutor;
     private final Executor executor;
     private final ThreadPoolExecutorMBean executorMBean;
+    private final ScheduledExecutorService statusScheduledExecutor;
     private final ScheduledExecutorService updateScheduledExecutor;
     private final ScheduledExecutorService errorScheduledExecutor;
     private final RemoteTaskStats stats;
@@ -117,6 +119,7 @@ public class HttpRemoteTaskFactory
         this.locationFactory = locationFactory;
         this.maxErrorDuration = config.getRemoteTaskMaxErrorDuration();
         this.taskStatusRefreshMaxWait = taskConfig.getStatusRefreshMaxWait();
+        this.taskStatusFetchInterval = taskConfig.getStatusFetchInterval();
         this.taskInfoUpdateInterval = taskConfig.getInfoUpdateInterval();
         this.taskInfoRefreshMaxWait = taskConfig.getInfoRefreshMaxWait();
         this.coreExecutor = newCachedThreadPool(daemonThreadsNamed("remote-task-callback-%s"));
@@ -154,6 +157,7 @@ public class HttpRemoteTaskFactory
         this.metadataManager = metadataManager;
         this.queryManager = queryManager;
 
+        this.statusScheduledExecutor = newSingleThreadScheduledExecutor(daemonThreadsNamed("task-status-fetch-scheduler-%s"));
         this.updateScheduledExecutor = newSingleThreadScheduledExecutor(daemonThreadsNamed("task-info-update-scheduler-%s"));
         this.errorScheduledExecutor = newSingleThreadScheduledExecutor(daemonThreadsNamed("remote-task-error-delay-%s"));
     }
@@ -196,10 +200,12 @@ public class HttpRemoteTaskFactory
                 outputBuffers,
                 httpClient,
                 executor,
+                statusScheduledExecutor,
                 updateScheduledExecutor,
                 errorScheduledExecutor,
                 maxErrorDuration,
                 taskStatusRefreshMaxWait,
+                taskStatusFetchInterval,
                 taskInfoRefreshMaxWait,
                 taskInfoUpdateInterval,
                 summarizeTaskInfo,

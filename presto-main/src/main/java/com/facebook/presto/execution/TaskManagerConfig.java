@@ -65,8 +65,9 @@ public class TaskManagerConfig
     private Duration infoMaxAge = new Duration(15, TimeUnit.MINUTES);
 
     private Duration statusRefreshMaxWait = new Duration(1, TimeUnit.SECONDS);
-    private Duration infoRefreshMaxWait = new Duration(0, TimeUnit.SECONDS);
+    private Duration statusFetchInterval = new Duration(0, TimeUnit.SECONDS);
 
+    private Duration infoRefreshMaxWait = new Duration(0, TimeUnit.SECONDS);
     private Duration infoUpdateInterval = new Duration(3, TimeUnit.SECONDS);
 
     private int writerCount = 1;
@@ -96,6 +97,22 @@ public class TaskManagerConfig
     public TaskManagerConfig setStatusRefreshMaxWait(Duration statusRefreshMaxWait)
     {
         this.statusRefreshMaxWait = statusRefreshMaxWait;
+        return this;
+    }
+
+    @MinDuration("0ms")
+    @MaxDuration("100s")
+    @NotNull
+    public Duration getStatusFetchInterval()
+    {
+        return statusFetchInterval;
+    }
+
+    @Config("task.status-fetch-interval")
+    @ConfigDescription("Interval between fetching task status")
+    public TaskManagerConfig setStatusFetchInterval(Duration statusFetchInterval)
+    {
+        this.statusFetchInterval = statusFetchInterval;
         return this;
     }
 

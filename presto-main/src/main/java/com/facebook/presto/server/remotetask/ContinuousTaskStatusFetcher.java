@@ -42,6 +42,7 @@ import javax.annotation.concurrent.GuardedBy;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -63,6 +64,7 @@ import static com.facebook.presto.util.Failures.REMOTE_TASK_MISMATCH_ERROR;
 import static io.airlift.units.Duration.nanosSince;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 class ContinuousTaskStatusFetcher
         implements SimpleHttpResponseCallback<TaskStatus>
@@ -74,9 +76,11 @@ class ContinuousTaskStatusFetcher
     private final StateMachine<TaskStatus> taskStatus;
     private final Codec<TaskStatus> taskStatusCodec;
 
+    private final long fetchIntervalMillis;
     private final Duration refreshMaxWait;
     private final Executor executor;
     private final HttpClient httpClient;
+    private final ScheduledExecutorService statusScheduledExecutor;
     private final RequestErrorTracker errorTracker;
     private final RemoteTaskStats stats;
     private final boolean binaryTransportEnabled;
@@ -84,6 +88,7 @@ class ContinuousTaskStatusFetcher
     private final Protocol thriftProtocol;
 
     private final AtomicLong currentRequestStartNanos = new AtomicLong();
+    private final AtomicLong lastUpdateNanos = new AtomicLong();
 
     @GuardedBy("this")
     private boolean running;
@@ -91,15 +96,20 @@ class ContinuousTaskStatusFetcher
     @GuardedBy("this")
     private ListenableFuture<BaseResponse<TaskStatus>> future;
 
+    @GuardedBy("this")
+    private ScheduledFuture<?> scheduledFuture;
+
     public ContinuousTaskStatusFetcher(
             Consumer<Throwable> onFail,
             TaskId taskId,
             TaskStatus initialTaskStatus,
+            Duration fetchInterval,
             Duration refreshMaxWait,
             Codec<TaskStatus> taskStatusCodec,
             Executor executor,
             HttpClient httpClient,
             Duration maxErrorDuration,
+            ScheduledExecutorService statusScheduledExecutor,
             ScheduledExecutorService errorScheduledExecutor,
             RemoteTaskStats stats,
             boolean binaryTransportEnabled,
@@ -112,12 +122,14 @@ class ContinuousTaskStatusFetcher
         this.onFail = requireNonNull(onFail, "onFail is null");
         this.taskStatus = new StateMachine<>("task-" + taskId, executor, initialTaskStatus);
 
+        this.fetchIntervalMillis = requireNonNull(fetchInterval, "fetchInterval is null").toMillis();
         this.refreshMaxWait = requireNonNull(refreshMaxWait, "refreshMaxWait is null");
         this.taskStatusCodec = requireNonNull(taskStatusCodec, "taskStatusCodec is null");
 
         this.executor = requireNonNull(executor, "executor is null");
         this.httpClient = requireNonNull(httpClient, "httpClient is null");
 
+        this.statusScheduledExecutor = requireNonNull(statusScheduledExecutor, "statusScheduledExecutor is null");
         this.errorTracker = taskRequestErrorTracker(taskId, initialTaskStatus.getSelf(), maxErrorDuration, errorScheduledExecutor, "getting task status");
         this.stats = requireNonNull(stats, "stats is null");
         this.binaryTransportEnabled = binaryTransportEnabled;
@@ -132,7 +144,7 @@ class ContinuousTaskStatusFetcher
             return;
         }
         running = true;
-        scheduleNextRequest();
+        scheduleUpdate();
     }
 
     public synchronized void stop()
@@ -143,9 +155,33 @@ class ContinuousTaskStatusFetcher
             future.cancel(false);
             future = null;
         }
+        if (scheduledFuture != null) {
+            scheduledFuture.cancel(true);
+        }
     }
 
-    private synchronized void scheduleNextRequest()
+    private synchronized void scheduleUpdate()
+    {
+        scheduledFuture = statusScheduledExecutor.scheduleWithFixedDelay(() -> {
+            try {
+                synchronized (this) {
+                    // if the previous request still running, don't schedule a new request
+                    if (future != null && !future.isDone()) {
+                        return;
+                    }
+                }
+                if (nanosSince(lastUpdateNanos.get()).toMillis() >= fetchIntervalMillis) {
+                    sendNextRequest();
+                }
+            }
+            catch (Throwable t) {
+                fatal(t);
+                throw t;
+            }
+        }, 0, 100, MILLISECONDS);
+    }
+
+    private synchronized void sendNextRequest()
     {
         // stopped or done?
         TaskStatus taskStatus = getTaskStatus();
@@ -163,7 +199,7 @@ class ContinuousTaskStatusFetcher
         // if throttled due to error, asynchronously wait for timeout and try again
         ListenableFuture<?> errorRateLimit = errorTracker.acquireRequestPermit();
         if (!errorRateLimit.isDone()) {
-            errorRateLimit.addListener(this::scheduleNextRequest, executor);
+            errorRateLimit.addListener(this::sendNextRequest, executor);
             return;
         }
 
@@ -213,13 +249,14 @@ class ContinuousTaskStatusFetcher
     public void success(TaskStatus value)
     {
         try (SetThreadName ignored = new SetThreadName("ContinuousTaskStatusFetcher-%s", taskId)) {
+            lastUpdateNanos.set(System.nanoTime());
             updateStats(currentRequestStartNanos.get());
             try {
                 updateTaskStatus(value);
                 errorTracker.requestSucceeded();
             }
             finally {
-                scheduleNextRequest();
+                scheduleUpdate();
             }
         }
     }
@@ -228,6 +265,7 @@ class ContinuousTaskStatusFetcher
     public void failed(Throwable cause)
     {
         try (SetThreadName ignored = new SetThreadName("ContinuousTaskStatusFetcher-%s", taskId)) {
+            lastUpdateNanos.set(System.nanoTime());
             updateStats(currentRequestStartNanos.get());
             try {
                 // if task not already done, record error
@@ -244,7 +282,7 @@ class ContinuousTaskStatusFetcher
                 onFail.accept(e);
             }
             finally {
-                scheduleNextRequest();
+                scheduleUpdate();
             }
         }
     }
