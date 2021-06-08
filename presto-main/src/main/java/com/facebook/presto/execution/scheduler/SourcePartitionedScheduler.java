@@ -25,9 +25,11 @@ import com.facebook.presto.split.EmptySplit;
 import com.facebook.presto.split.SplitSource;
 import com.facebook.presto.split.SplitSource.SplitBatch;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multimap;
+import com.google.common.collect.Streams;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
@@ -40,6 +42,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static com.facebook.airlift.concurrent.MoreFutures.addSuccessCallback;
 import static com.facebook.airlift.concurrent.MoreFutures.getFutureValue;
@@ -56,6 +60,7 @@ import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.util.concurrent.Futures.nonCancellationPropagating;
 import static java.util.Objects.requireNonNull;
+import static java.util.function.UnaryOperator.identity;
 
 public class SourcePartitionedScheduler
         implements SourceScheduler
@@ -210,6 +215,13 @@ public class SourcePartitionedScheduler
         boolean anyBlockedOnNextSplitBatch = false;
         boolean anyNotBlocked = false;
 
+        Map<String, Integer> activeNodesMap = new HashMap<>();
+        List<InternalNode> activeNodes = splitPlacementPolicy.getActiveNodes();
+        for(int i=0; i< activeNodes.size(); i++)
+        {
+            activeNodesMap.put(activeNodes.get(i).getNodeIdentifier(), i);
+        }
+
         for (Entry<Lifespan, ScheduleGroup> entry : scheduleGroups.entrySet()) {
             Lifespan lifespan = entry.getKey();
             ScheduleGroup scheduleGroup = entry.getValue();
@@ -296,7 +308,7 @@ public class SourcePartitionedScheduler
             }
 
             // assign the splits with successful placements
-            overallNewTasks.addAll(assignSplits(splitAssignment, noMoreSplitsNotification));
+            overallNewTasks.addAll(assignSplits(splitAssignment, noMoreSplitsNotification, activeNodes, activeNodesMap));
 
             // Assert that "placement future is not done" implies "pendingSplits is not empty".
             // The other way around is not true. One obvious reason is (un)lucky timing, where the placement is unblocked between `computeAssignments` and this line.
@@ -446,7 +458,7 @@ public class SourcePartitionedScheduler
         whenFinishedOrNewLifespanAdded.set(null);
     }
 
-    private Set<RemoteTask> assignSplits(Multimap<InternalNode, Split> splitAssignment, Multimap<InternalNode, Lifespan> noMoreSplitsNotification)
+    private Set<RemoteTask> assignSplits(Multimap<InternalNode, Split> splitAssignment, Multimap<InternalNode, Lifespan> noMoreSplitsNotification, List<InternalNode> activeNodes, Map<String, Integer> activeNodesMap)
     {
         ImmutableSet.Builder<RemoteTask> newTasks = ImmutableSet.builder();
 
@@ -455,6 +467,8 @@ public class SourcePartitionedScheduler
                 .addAll(noMoreSplitsNotification.keySet())
                 .build();
         for (InternalNode node : nodes) {
+            int index = (activeNodesMap.get(node.getNodeIdentifier()) + 1) % activeNodes.size();
+            InternalNode sisterNode = activeNodes.get(index);
             ImmutableMultimap<PlanNodeId, Split> splits = ImmutableMultimap.<PlanNodeId, Split>builder()
                     .putAll(partitionedNode, splitAssignment.get(node))
                     .build();
@@ -468,6 +482,12 @@ public class SourcePartitionedScheduler
                     node,
                     splits,
                     noMoreSplits.build()));
+
+            // schedule same splits to sister Node
+            newTasks.addAll(stage.scheduleSplits(
+                    sisterNode,
+                    splits,
+                    ImmutableMultimap.of()));
         }
         return newTasks.build();
     }
