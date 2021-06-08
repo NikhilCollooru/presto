@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -70,6 +71,8 @@ public class InternalHiveSplit
     private long start;
     private int currentBlockIndex;
 
+    private final long splitId;
+
     public InternalHiveSplit(
             String relativeUri,
             long start,
@@ -84,7 +87,8 @@ public class InternalHiveSplit
             HiveSplitPartitionInfo partitionInfo,
             Optional<byte[]> extraFileInfo,
             Optional<EncryptionInformation> encryptionInformation,
-            Map<String, String> customSplitInfo)
+            Map<String, String> customSplitInfo,
+            OptionalLong splitId)
     {
         checkArgument(start >= 0, "start must be positive");
         checkArgument(end >= 0, "end must be positive");
@@ -123,6 +127,7 @@ public class InternalHiveSplit
         }
         blockAddresses = allAddressesEmpty ? ImmutableList.of() : addressesBuilder.build();
         this.encryptionInformation = encryptionInformation;
+        this.splitId = splitId.orElse(-1);
     }
 
     public String getPath()

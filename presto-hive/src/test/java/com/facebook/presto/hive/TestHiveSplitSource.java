@@ -30,6 +30,7 @@ import org.testng.annotations.Test;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -547,7 +548,8 @@ public class TestHiveSplitSource
                             ImmutableSet.of()),
                     Optional.empty(),
                     Optional.empty(),
-                    ImmutableMap.of());
+                    ImmutableMap.of(),
+                    OptionalLong.empty());
         }
     }
 }

@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
+import java.util.OptionalLong;
 
 import static com.facebook.presto.hive.HiveUtil.isSplittable;
 import static com.facebook.presto.hive.util.CustomSplitConversionUtils.extractCustomSplitInfo;
@@ -84,17 +85,22 @@ public class InternalHiveSplitFactory
         checkArgument(minimumTargetSplitSizeInBytes > 0, "minimumTargetSplitSize must be > 0, found: %s", minimumTargetSplitSize);
     }
 
+    public Optional<InternalHiveSplit> createInternalHiveSplit(HiveFileInfo fileInfo, boolean splittable, long splitId)
+    {
+        return createInternalHiveSplit(fileInfo, OptionalInt.empty(), OptionalInt.empty(), splittable, OptionalLong.of(splitId));
+    }
+
     public Optional<InternalHiveSplit> createInternalHiveSplit(HiveFileInfo fileInfo, boolean splittable)
     {
-        return createInternalHiveSplit(fileInfo, OptionalInt.empty(), OptionalInt.empty(), splittable);
+        return createInternalHiveSplit(fileInfo, OptionalInt.empty(), OptionalInt.empty(), splittable, OptionalLong.empty());
     }
 
     public Optional<InternalHiveSplit> createInternalHiveSplit(HiveFileInfo fileInfo, int readBucketNumber, int tableBucketNumber, boolean splittable)
     {
-        return createInternalHiveSplit(fileInfo, OptionalInt.of(readBucketNumber), OptionalInt.of(tableBucketNumber), splittable);
+        return createInternalHiveSplit(fileInfo, OptionalInt.of(readBucketNumber), OptionalInt.of(tableBucketNumber), splittable, OptionalLong.empty());
     }
 
-    private Optional<InternalHiveSplit> createInternalHiveSplit(HiveFileInfo fileInfo, OptionalInt readBucketNumber, OptionalInt tableBucketNumber, boolean splittable)
+    private Optional<InternalHiveSplit> createInternalHiveSplit(HiveFileInfo fileInfo, OptionalInt readBucketNumber, OptionalInt tableBucketNumber, boolean splittable, OptionalLong splitId)
     {
         splittable = splittable &&
                 fileInfo.getLength() > minimumTargetSplitSizeInBytes &&
@@ -204,7 +210,8 @@ public class InternalHiveSplitFactory
                 partitionInfo,
                 extraFileInfo,
                 encryptionInformation,
-                customSplitInfo));
+                customSplitInfo,
+                OptionalLong.empty()));
     }
 
     private boolean needsHostAddresses(boolean forceLocalScheduling, List<HostAddress> addresses)

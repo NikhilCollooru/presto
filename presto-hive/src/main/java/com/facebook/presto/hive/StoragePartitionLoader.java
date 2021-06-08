@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.airlift.log.Logger;
 import com.facebook.presto.common.predicate.Domain;
 import com.facebook.presto.hive.filesystem.ExtendedFileSystem;
 import com.facebook.presto.hive.metastore.Partition;
@@ -58,6 +59,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntPredicate;
 import java.util.function.Supplier;
 
@@ -96,7 +98,9 @@ import static org.apache.hadoop.hive.common.FileUtils.HIDDEN_FILES_PATH_FILTER;
 public class StoragePartitionLoader
         extends PartitionLoader
 {
+    private static final Logger log = Logger.get(StoragePartitionLoader.class);
     private static final ListenableFuture<?> COMPLETED_FUTURE = immediateFuture(null);
+    private final AtomicLong splitId = new AtomicLong();
 
     private final Table table;
     private final Optional<Domain> pathDomain;
@@ -322,7 +326,7 @@ public class StoragePartitionLoader
 
         HiveDirectoryContext hiveDirectoryContext = new HiveDirectoryContext(recursiveDirWalkerEnabled ? RECURSE : IGNORED, cacheable);
         return stream(directoryLister.list(fileSystem, table, path, namenodeStats, pathFilter, hiveDirectoryContext))
-                .map(status -> splitFactory.createInternalHiveSplit(status, splittable))
+                .map(status -> splitFactory.createInternalHiveSplit(status, splittable, splitId.incrementAndGet()))
                 .filter(Optional::isPresent)
                 .map(Optional::get)
                 .iterator();
