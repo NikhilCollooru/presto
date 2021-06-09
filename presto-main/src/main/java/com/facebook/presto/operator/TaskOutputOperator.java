@@ -168,6 +168,24 @@ public class TaskOutputOperator
     }
 
     @Override
+    public void addInput(Page page, int splitId)
+    {
+        requireNonNull(page, "page is null");
+        if (page.getPositionCount() == 0) {
+            return;
+        }
+
+        page = pagePreprocessor.apply(page);
+
+        List<SerializedPage> serializedPages = splitPage(page, DEFAULT_MAX_PAGE_SIZE_IN_BYTES).stream()
+                .map(p -> serde.serialize(p, splitId))
+                .collect(toImmutableList());
+
+        outputBuffer.enqueue(operatorContext.getDriverContext().getLifespan(), serializedPages);
+        operatorContext.recordOutput(page.getSizeInBytes(), page.getPositionCount());
+    }
+
+    @Override
     public Page getOutput()
     {
         return null;

@@ -15,6 +15,7 @@ package com.facebook.presto.operator;
 
 import com.facebook.airlift.http.client.HttpClient;
 import com.facebook.airlift.http.client.HttpUriBuilder;
+import com.facebook.airlift.log.Logger;
 import com.facebook.drift.client.DriftClient;
 import com.facebook.presto.execution.TaskId;
 import com.facebook.presto.memory.context.LocalMemoryContext;
@@ -41,6 +42,7 @@ import java.util.Deque;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -62,6 +64,7 @@ import static io.airlift.slice.Slices.EMPTY_SLICE;
 import static io.airlift.units.DataSize.Unit.BYTE;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -80,6 +83,8 @@ import static java.util.Objects.requireNonNull;
 public class ExchangeClient
         implements Closeable
 {
+    private static final Logger log = Logger.get(ExchangeClient.class);
+
     private static final SerializedPage NO_MORE_PAGES = new SerializedPage(EMPTY_SLICE, PageCodecMarker.none(), 0, 0, 0);
     private static final ListenableFuture<?> NOT_BLOCKED = immediateFuture(null);
 
@@ -124,6 +129,8 @@ public class ExchangeClient
 
     private final LocalMemoryContext systemMemoryContext;
     private final Executor pageBufferClientCallbackExecutor;
+
+    private final Map<Integer, Integer> splitIdToTaskIdMap = new ConcurrentHashMap<>();
 
     // ExchangeClientStatus.mergeWith assumes all clients have the same bufferCapacity.
     // Please change that method accordingly when this assumption becomes not true.
@@ -220,7 +227,8 @@ public class ExchangeClient
                 asyncPageTransportLocation,
                 new ExchangeClientCallback(),
                 scheduler,
-                pageBufferClientCallbackExecutor);
+                pageBufferClientCallbackExecutor,
+                remoteSourceTaskId.getId());
         allClients.put(location, client);
         checkState(taskIdToLocationMap.put(remoteSourceTaskId, location) == null, "Duplicate remoteSourceTaskId: " + remoteSourceTaskId);
         queuedClients.add(client);
@@ -412,8 +420,20 @@ public class ExchangeClient
         }
     }
 
-    private boolean addPages(List<SerializedPage> pages)
+    private boolean addPages(List<SerializedPage> rawPages, int remoteTaskId)
     {
+        ImmutableList.Builder<SerializedPage> pagesBuilder = ImmutableList.builder();
+        for (SerializedPage page : rawPages) {
+            if (page.getSplitId() != -1) {
+                if (splitIdToTaskIdMap.containsKey(page.getSplitId()) && remoteTaskId != splitIdToTaskIdMap.get(page.getSplitId())) {
+                    continue;
+                }
+                splitIdToTaskIdMap.put(page.getSplitId(), remoteTaskId);
+            }
+            pagesBuilder.add(page);
+        }
+        ImmutableList<SerializedPage> pages = pagesBuilder.build();
+
         // Compute stats before acquiring the lock
         long pagesRetainedSizeInBytes = 0;
         long responseSize = 0;
@@ -519,7 +539,7 @@ public class ExchangeClient
         {
             requireNonNull(client, "client is null");
             requireNonNull(pages, "pages is null");
-            return ExchangeClient.this.addPages(pages);
+            return ExchangeClient.this.addPages(pages, client.getRemoteTaskId());
         }
 
         @Override

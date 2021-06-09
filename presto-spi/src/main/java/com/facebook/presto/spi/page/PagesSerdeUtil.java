@@ -36,7 +36,7 @@ import static java.util.Objects.requireNonNull;
 
 public class PagesSerdeUtil
 {
-    public static final int PAGE_METADATA_SIZE = SIZE_OF_INT * 3 + SIZE_OF_BYTE + SIZE_OF_LONG;
+    public static final int PAGE_METADATA_SIZE = SIZE_OF_INT * 3 + SIZE_OF_BYTE + SIZE_OF_LONG + SIZE_OF_INT;
 
     private PagesSerdeUtil()
     {
@@ -74,6 +74,7 @@ public class PagesSerdeUtil
         output.writeInt(page.getUncompressedSizeInBytes());
         output.writeInt(page.getSizeInBytes());
         output.writeLong(page.getChecksum());
+        output.writeInt(page.getSplitId());
     }
 
     public static SerializedPage readSerializedPage(SliceInput sliceInput)
@@ -83,8 +84,10 @@ public class PagesSerdeUtil
         int uncompressedSizeInBytes = sliceInput.readInt();
         int sizeInBytes = sliceInput.readInt();
         long checksum = sliceInput.readLong();
+        int splitId = sliceInput.readInt();
         Slice slice = sliceInput.readSlice(toIntExact((sizeInBytes)));
-        return new SerializedPage(slice, codecMarker, positionCount, uncompressedSizeInBytes, checksum);
+        return new SerializedPage(slice, codecMarker, positionCount, uncompressedSizeInBytes, checksum, splitId);
+        //return new SerializedPage(slice, codecMarker, positionCount, uncompressedSizeInBytes, checksum);
     }
 
     public static long writeSerializedPages(SliceOutput sliceOutput, Iterable<SerializedPage> pages)

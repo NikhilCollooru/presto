@@ -257,6 +257,9 @@ public class Driver
         SourceOperator sourceOperator = this.sourceOperator.orElseThrow(VerifyException::new);
         for (ScheduledSplit newSplit : newSplits) {
             Split split = newSplit.getSplit();
+            if (!(split.getConnectorSplit() instanceof RemoteSplit)) {
+                this.split.set(split);
+            }
 
             if (fragmentResultCacheContext.get().isPresent() && !(split.getConnectorSplit() instanceof RemoteSplit)) {
                 checkState(!this.cachedResult.get().isPresent());
@@ -388,6 +391,11 @@ public class Driver
                 rootOperator.getOperatorContext().recordFinish(operationTimer);
             }
 
+            if (split.get() != null) {
+                int sid = split.get().getSplitIdentifier().hashCode();
+                int a = 5;
+            }
+
             boolean movedPage = false;
             if (cachedResult.get().isPresent()) {
                 Iterator<Page> remainingPages = cachedResult.get().get();
@@ -425,7 +433,12 @@ public class Driver
 
                         // if we got an output page, add it to the next operator
                         if (page != null && page.getPositionCount() != 0) {
-                            next.addInput(page);
+                            if (i == activeOperators.size() - 2 && split.get() != null) {
+                                next.addInput(page, split.get().getSplitIdentifier().hashCode());
+                            }
+                            else {
+                                next.addInput(page);
+                            }
                             next.getOperatorContext().recordAddInput(operationTimer, page);
                             movedPage = true;
                         }

@@ -32,6 +32,7 @@ public class SerializedPage
     private final int uncompressedSizeInBytes;
     private final byte pageCodecMarkers;
     private final long checksum;
+    private final int splitId;
 
     public SerializedPage(
             Slice slice,
@@ -39,6 +40,17 @@ public class SerializedPage
             int positionCount,
             int uncompressedSizeInBytes,
             long checksum)
+    {
+        this(slice, pageCodecMarkers, positionCount, uncompressedSizeInBytes, checksum, -1);
+    }
+
+    public SerializedPage(
+            Slice slice,
+            byte pageCodecMarkers,
+            int positionCount,
+            int uncompressedSizeInBytes,
+            long checksum,
+            int splitId)
     {
         this.slice = requireNonNull(slice, "slice is null");
         this.positionCount = positionCount;
@@ -55,6 +67,12 @@ public class SerializedPage
             }
         }
         this.checksum = checksum;
+        this.splitId = splitId;
+    }
+
+    public int getSplitId()
+    {
+        return splitId;
     }
 
     public byte getPageCodecMarkers()

@@ -66,18 +66,26 @@ public class PagesSerde
         this.checksumEnabled = checksumEnabled;
     }
 
+    public SerializedPage serialize(Page page, int splitId)
+    {
+        SliceOutput serializationBuffer = new DynamicSliceOutput(toIntExact(page.getSizeInBytes() + Integer.BYTES)); // block length is an int
+        writeRawPage(page, serializationBuffer, blockEncodingSerde);
+
+        return wrapSlice(serializationBuffer.slice(), page.getPositionCount(), splitId);
+    }
+
     public SerializedPage serialize(Page page)
     {
         SliceOutput serializationBuffer = new DynamicSliceOutput(toIntExact(page.getSizeInBytes() + Integer.BYTES)); // block length is an int
         writeRawPage(page, serializationBuffer, blockEncodingSerde);
 
-        return wrapSlice(serializationBuffer.slice(), page.getPositionCount());
+        return wrapSlice(serializationBuffer.slice(), page.getPositionCount(), -1);
     }
 
     public SerializedPage serialize(Slice slice, int positionCount)
     {
         checkArgument(slice.isCompact(), "slice is not compact");
-        return wrapSlice(slice, positionCount);
+        return wrapSlice(slice, positionCount, -1);
     }
 
     public Page deserialize(SerializedPage serializedPage)
@@ -117,7 +125,7 @@ public class PagesSerde
         return sizeOf(compressionBuffer);
     }
 
-    private SerializedPage wrapSlice(Slice slice, int positionCount)
+    private SerializedPage wrapSlice(Slice slice, int positionCount, int splitId)
     {
         int uncompressedSize = slice.length();
         byte markers = PageCodecMarker.none();
@@ -153,7 +161,7 @@ public class PagesSerde
             checksum = computeSerializedPageChecksum(slice, markers, positionCount, uncompressedSize);
         }
 
-        return new SerializedPage(slice, markers, positionCount, uncompressedSize, checksum);
+        return new SerializedPage(slice, markers, positionCount, uncompressedSize, checksum, splitId);
     }
 
     private static void checkArgument(boolean condition, String message)

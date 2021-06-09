@@ -45,6 +45,11 @@ public interface Operator
      */
     void addInput(Page page);
 
+    default void addInput(Page page, int splitId)
+    {
+        addInput(page);
+    }
+
     /**
      * Gets an output page from the operator.  If no output data is currently
      * available, return null.

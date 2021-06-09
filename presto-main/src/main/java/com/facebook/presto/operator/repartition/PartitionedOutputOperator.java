@@ -187,6 +187,7 @@ public class PartitionedOutputOperator
     private final PagePartitioner partitionFunction;
     private ListenableFuture<?> isBlocked = NOT_BLOCKED;
     private boolean finished;
+    private int splitId;
 
     public PartitionedOutputOperator(
             OperatorContext operatorContext,
@@ -228,7 +229,7 @@ public class PartitionedOutputOperator
     public void finish()
     {
         finished = true;
-        partitionFunction.flush(true);
+        partitionFunction.flush(true, splitId);
     }
 
     @Override
@@ -257,6 +258,13 @@ public class PartitionedOutputOperator
     }
 
     @Override
+    public void addInput(Page page, int splitId)
+    {
+        this.splitId = splitId;
+        addInput(page);
+    }
+
+    @Override
     public void addInput(Page page)
     {
         requireNonNull(page, "page is null");
@@ -266,7 +274,7 @@ public class PartitionedOutputOperator
         }
 
         page = pagePreprocessor.apply(page);
-        partitionFunction.partitionPage(page);
+        partitionFunction.partitionPage(page, splitId);
     }
 
     @Override
@@ -381,7 +389,7 @@ public class PartitionedOutputOperator
             return PartitionedOutputInfo.createPartitionedOutputInfoSupplier(rowsAdded, pagesAdded, outputBuffer);
         }
 
-        public void partitionPage(Page page)
+        public void partitionPage(Page page, int splitId)
         {
             requireNonNull(page, "page is null");
 
@@ -404,7 +412,7 @@ public class PartitionedOutputOperator
             // We track the memory before it's flushed to avoid under counting when the page size is large.
             systemMemoryContext.setBytes(getRetainedSizeInBytes());
 
-            flush(false);
+            flush(false, splitId);
         }
 
         private Page getPartitionFunctionArguments(Page page)
@@ -437,7 +445,7 @@ public class PartitionedOutputOperator
             }
         }
 
-        public void flush(boolean force)
+        public void flush(boolean force, int splitId)
         {
             // add all full pages to output buffer
             for (int partition = 0; partition < pageBuilders.length; partition++) {
@@ -448,19 +456,19 @@ public class PartitionedOutputOperator
 
                     operatorContext.recordOutput(pagePartition.getSizeInBytes(), pagePartition.getPositionCount());
 
-                    outputBuffer.enqueue(operatorContext.getDriverContext().getLifespan(), partition, splitAndSerializePage(pagePartition));
+                    outputBuffer.enqueue(operatorContext.getDriverContext().getLifespan(), partition, splitAndSerializePage(pagePartition, splitId));
                     pagesAdded.incrementAndGet();
                     rowsAdded.addAndGet(pagePartition.getPositionCount());
                 }
             }
         }
 
-        private List<SerializedPage> splitAndSerializePage(Page pagePartition)
+        private List<SerializedPage> splitAndSerializePage(Page pagePartition, int splitId)
         {
             List<Page> pagesFromSplitting = splitPage(pagePartition, DEFAULT_MAX_PAGE_SIZE_IN_BYTES);
             ImmutableList.Builder<SerializedPage> builder = ImmutableList.builderWithExpectedSize(pagesFromSplitting.size());
             for (Page p : pagesFromSplitting) {
-                builder.add(serde.serialize(p));
+                builder.add(serde.serialize(p, splitId));
             }
             return builder.build();
         }

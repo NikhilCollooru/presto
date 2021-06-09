@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.airlift.log.Logger;
 import com.facebook.presto.hive.metastore.Storage;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorSplit;
@@ -42,6 +43,8 @@ import static java.util.Objects.requireNonNull;
 public class HiveSplit
         implements ConnectorSplit
 {
+    private static final Logger log = Logger.get(HiveSplit.class);
+
     private final String path;
     private final long start;
     private final long length;
