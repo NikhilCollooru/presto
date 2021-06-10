@@ -144,6 +144,7 @@ public class LegacySqlQueryScheduler
     private final AtomicBoolean scheduling = new AtomicBoolean();
 
     private final PartialResultQueryTaskTracker partialResultQueryTaskTracker;
+    private final SpeculativeQueryTaskTracker speculativeQueryTaskTracker;
 
     public static LegacySqlQueryScheduler createSqlQueryScheduler(
             LocationFactory locationFactory,
@@ -256,6 +257,7 @@ public class LegacySqlQueryScheduler
 
         this.maxConcurrentMaterializations = getMaxConcurrentMaterializations(session);
         this.partialResultQueryTaskTracker = new PartialResultQueryTaskTracker(partialResultQueryManager, getPartialResultsCompletionRatioThreshold(session), getPartialResultsMaxExecutionTimeMultiplier(session), warningCollector);
+        this.speculativeQueryTaskTracker = new SpeculativeQueryTaskTracker();
     }
 
     // this is a separate method to ensure that the `this` reference is not leaked during construction
@@ -440,6 +442,13 @@ public class LegacySqlQueryScheduler
                             }
                         }
 
+                        if (stageExecutionAndScheduler.getStageExecution().getFragment().isLeaf()) {
+                            for (RemoteTask task : result.getNewTasks()) {
+                                speculativeQueryTaskTracker.trackTask(task);
+                                task.addFinalTaskInfoListener(speculativeQueryTaskTracker::recordTaskFinish);
+                            }
+                        }
+
                         // modify parent and children based on the results of the scheduling
                         if (result.isFinished()) {
                             stageExecution.schedulingComplete();
@@ -514,6 +523,7 @@ public class LegacySqlQueryScheduler
 
             // Inform the tracker that task scheduling has completed
             partialResultQueryTaskTracker.completeTaskScheduling();
+            speculativeQueryTaskTracker.completeTaskScheduling();
 
             if (!getSectionsReadyForExecution().isEmpty()) {
                 startScheduling();
