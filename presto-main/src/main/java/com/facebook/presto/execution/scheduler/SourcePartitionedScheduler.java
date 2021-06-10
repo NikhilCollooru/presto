@@ -25,11 +25,9 @@ import com.facebook.presto.split.EmptySplit;
 import com.facebook.presto.split.SplitSource;
 import com.facebook.presto.split.SplitSource.SplitBatch;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multimap;
-import com.google.common.collect.Streams;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
@@ -42,8 +40,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 import static com.facebook.airlift.concurrent.MoreFutures.addSuccessCallback;
 import static com.facebook.airlift.concurrent.MoreFutures.getFutureValue;
@@ -60,7 +56,6 @@ import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static com.google.common.util.concurrent.Futures.nonCancellationPropagating;
 import static java.util.Objects.requireNonNull;
-import static java.util.function.UnaryOperator.identity;
 
 public class SourcePartitionedScheduler
         implements SourceScheduler
@@ -145,7 +140,8 @@ public class SourcePartitionedScheduler
         SourcePartitionedScheduler sourcePartitionedScheduler = new SourcePartitionedScheduler(stage, partitionedNode, splitSource, splitPlacementPolicy, splitBatchSize, false);
         sourcePartitionedScheduler.startLifespan(Lifespan.taskWide(), NOT_PARTITIONED);
 
-        return new StageScheduler() {
+        return new StageScheduler()
+        {
             @Override
             public ScheduleResult schedule()
             {
@@ -217,8 +213,7 @@ public class SourcePartitionedScheduler
 
         Map<String, Integer> activeNodesMap = new HashMap<>();
         List<InternalNode> activeNodes = splitPlacementPolicy.getActiveNodes();
-        for(int i=0; i< activeNodes.size(); i++)
-        {
+        for (int i = 0; i < activeNodes.size(); i++) {
             activeNodesMap.put(activeNodes.get(i).getNodeIdentifier(), i);
         }
 

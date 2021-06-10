@@ -64,7 +64,6 @@ import static io.airlift.slice.Slices.EMPTY_SLICE;
 import static io.airlift.units.DataSize.Unit.BYTE;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
-import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
