@@ -745,7 +745,8 @@ public class PrestoSparkQueryExecutionFactory
                 succinctBytes(peakUserMemoryReservationInBytes),
                 succinctBytes(peakNodeTotalMemoryReservationInBytes),
                 1,
-                1);
+                1,
+                plan.getFragment().isLeaf());
         return new StageInfo(
                 stageId,
                 URI.create("http://fake.invalid/stage/" + stageId),

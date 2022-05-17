@@ -32,15 +32,19 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.PriorityQueue;
+import java.util.Queue;
 import java.util.Set;
 
 import static com.facebook.presto.common.RuntimeMetricName.GET_SPLITS_TIME_NANOS;
+import static com.facebook.presto.common.RuntimeMetricName.SLOWEST_WORKER_NODES;
 import static com.facebook.presto.execution.StageExecutionState.FINISHED;
 import static io.airlift.units.DataSize.succinctBytes;
 import static io.airlift.units.Duration.succinctDuration;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.toIntExact;
+import static java.util.Comparator.comparingLong;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
@@ -62,7 +66,8 @@ public class StageExecutionInfo
             DataSize peakUserMemoryReservation,
             DataSize peakNodeTotalMemoryReservation,
             int finishedLifespans,
-            int totalLifespans)
+            int totalLifespans,
+            boolean isLeafStage)
     {
         int totalTasks = taskInfos.size();
         int runningTasks = 0;
@@ -110,6 +115,9 @@ public class StageExecutionInfo
         Map<String, OperatorStats> operatorToStats = new HashMap<>();
         RuntimeStats mergedRuntimeStats = new RuntimeStats();
         mergedRuntimeStats.addMetricValueIgnoreZero(GET_SPLITS_TIME_NANOS, (long) getSplitDistribution.getTotal());
+
+        Queue<LeafNodeElapsedTime> priorityQueue = new PriorityQueue<>(comparingLong(leafNodeScheduledTime -> -1 * leafNodeScheduledTime.getElapsedTime()));
+
         for (TaskInfo taskInfo : taskInfos) {
             TaskState taskState = taskInfo.getTaskStatus().getState();
             if (taskState.isDone()) {
@@ -120,6 +128,10 @@ public class StageExecutionInfo
             }
 
             TaskStats taskStats = taskInfo.getStats();
+
+            if (isLeafStage) {
+                priorityQueue.add(new LeafNodeElapsedTime(taskInfo.getTaskId().getId(), taskStats.getElapsedTimeInNanos()));
+            }
 
             totalDrivers += taskStats.getTotalDrivers();
             queuedDrivers += taskStats.getQueuedDrivers();
@@ -180,6 +192,11 @@ public class StageExecutionInfo
             mergedRuntimeStats.addMetricValueIgnoreZero(RuntimeMetricName.TASK_QUEUED_TIME_NANOS, taskStats.getQueuedTimeInNanos());
             mergedRuntimeStats.addMetricValue(RuntimeMetricName.TASK_SCHEDULED_TIME_NANOS, taskStats.getTotalScheduledTimeInNanos());
             mergedRuntimeStats.addMetricValueIgnoreZero(RuntimeMetricName.TASK_BLOCKED_TIME_NANOS, taskStats.getTotalBlockedTimeInNanos());
+        }
+
+        if(priorityQueue.size()>=2 && isLeafStage) {
+            mergedRuntimeStats.addMetricValue(SLOWEST_WORKER_NODES, priorityQueue.poll().getNodeId());
+            mergedRuntimeStats.addMetricValue(SLOWEST_WORKER_NODES, priorityQueue.poll().getNodeId());
         }
 
         StageExecutionStats stageExecutionStats = new StageExecutionStats(
@@ -292,5 +309,27 @@ public class StageExecutionInfo
                 StageExecutionStats.zero(stageId),
                 ImmutableList.of(),
                 Optional.empty());
+    }
+
+    private static class LeafNodeElapsedTime
+    {
+        private final int nodeId;
+        private final long elapsedTime;
+
+        public LeafNodeElapsedTime(int nodeId, long elapsedTime)
+        {
+            this.nodeId = nodeId;
+            this.elapsedTime = elapsedTime;
+        }
+
+        public int getNodeId()
+        {
+            return nodeId;
+        }
+
+        public long getElapsedTime()
+        {
+            return elapsedTime;
+        }
     }
 }

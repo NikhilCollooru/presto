@@ -351,7 +351,7 @@ public final class SqlStageExecution
 
     public StageExecutionInfo getStageExecutionInfo()
     {
-        return stateMachine.getStageExecutionInfo(this::getAllTaskInfo, finishedLifespans.size(), totalLifespans);
+        return stateMachine.getStageExecutionInfo(this::getAllTaskInfo, finishedLifespans.size(), totalLifespans, planFragment.isLeaf());
     }
 
     private Iterable<TaskInfo> getAllTaskInfo()
@@ -648,7 +648,7 @@ public final class SqlStageExecution
             List<TaskInfo> finalTaskInfos = getAllTasks().stream()
                     .map(RemoteTask::getTaskInfo)
                     .collect(toImmutableList());
-            stateMachine.setAllTasksFinal(finalTaskInfos, totalLifespans);
+            stateMachine.setAllTasksFinal(finalTaskInfos, totalLifespans, planFragment.isLeaf());
         }
     }
 

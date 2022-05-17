@@ -187,11 +187,11 @@ public class StageExecutionStateMachine
         finalInfo.addStateChangeListener(fireOnceStateChangeListener);
     }
 
-    public void setAllTasksFinal(Iterable<TaskInfo> finalTaskInfos, int totalLifespans)
+    public void setAllTasksFinal(Iterable<TaskInfo> finalTaskInfos, int totalLifespans, boolean isLeafStage)
     {
         requireNonNull(finalTaskInfos, "finalTaskInfos is null");
         checkState(state.get().isDone());
-        StageExecutionInfo stageInfo = getStageExecutionInfo(() -> finalTaskInfos, totalLifespans, totalLifespans);
+        StageExecutionInfo stageInfo = getStageExecutionInfo(() -> finalTaskInfos, totalLifespans, totalLifespans, isLeafStage);
         checkArgument(stageInfo.isFinal(), "finalTaskInfos are not all done");
         finalInfo.compareAndSet(Optional.empty(), Optional.of(stageInfo));
     }
@@ -316,7 +316,7 @@ public class StageExecutionStateMachine
                 progressPercentage);
     }
 
-    public StageExecutionInfo getStageExecutionInfo(Supplier<Iterable<TaskInfo>> taskInfosSupplier, int finishedLifespans, int totalLifespans)
+    public StageExecutionInfo getStageExecutionInfo(Supplier<Iterable<TaskInfo>> taskInfosSupplier, int finishedLifespans, int totalLifespans, boolean isLeafStage)
     {
         Optional<StageExecutionInfo> finalStageInfo = this.finalInfo.get();
         if (finalStageInfo.isPresent()) {
@@ -344,7 +344,8 @@ public class StageExecutionStateMachine
                 succinctBytes(peakUserMemory.get()),
                 succinctBytes(peakNodeTotalMemory.get()),
                 finishedLifespans,
-                totalLifespans);
+                totalLifespans,
+                isLeafStage);
     }
 
     public void recordGetSplitTime(long startNanos)
