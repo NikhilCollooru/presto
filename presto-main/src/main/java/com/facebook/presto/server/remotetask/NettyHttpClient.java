@@ -136,11 +136,10 @@ public class NettyHttpClient
                 httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, request.getUri().toString());
                 httpRequest.content().writeBytes(str.getBytes(StandardCharsets.UTF_8));
                 type = "POST";
+                httpRequest.headers().setInt("Content-Length", payload.length);
             }
             channel.pipeline().addLast(new HttpResponseHandler(listenableFuture, responseHandler, channel, type));
-            if (type == "POST") {
-                channel.pipeline().addLast(new LoggingOutboundHandler());
-            }
+
             httpRequest.headers().set("Host", request.getUri().getHost());
             httpRequest.headers().set("Content-Type", "application/json;charset=utf-8");
             httpRequest.headers().set("User-Agent", "NettyClient/1.0");
@@ -278,12 +277,8 @@ public class NettyHttpClient
 //            System.out.println("Response Headers:");
 //            System.out.println(msg.headers());
 //            // Print the response body
-            System.out.println("Response Body:");
-            String res = msg.content().toString(io.netty.util.CharsetUtil.UTF_8);
-            if (requestType.equals("POST")) {
-                int a = 1;
-            }
-            System.out.println(msg.content().toString(io.netty.util.CharsetUtil.UTF_8));
+//            System.out.println("Response Body:");
+//            System.out.println(msg.content().toString(io.netty.util.CharsetUtil.UTF_8));
             if (msg.status().code() == 200) {
                 future.set(responseHandler.handle(null, new Response()
                 {
@@ -320,7 +315,7 @@ public class NettyHttpClient
                 }));
             }
             else {
-                System.out.println(format("Request type:%s failed: %s", requestType, res));
+                System.out.println(format("Request type:%s failed", requestType));
                 future.set(null);
             }
             channel.close();
