@@ -19,28 +19,33 @@ import com.facebook.airlift.http.client.Request;
 import com.facebook.airlift.http.client.RequestStats;
 import com.facebook.airlift.http.client.Response;
 import com.facebook.airlift.http.client.ResponseHandler;
-import com.facebook.presto.operator.DynamicFilterSourceOperator;
+import com.facebook.airlift.http.client.StaticBodyGenerator;
 import com.facebook.presto.server.smile.BaseResponse;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.util.concurrent.SettableFuture;
 import io.netty.bootstrap.Bootstrap;
+import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOutboundHandlerAdapter;
+import io.netty.channel.ChannelPromise;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.DefaultFullHttpRequest;
+import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpClientCodec;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpVersion;
+import io.netty.util.CharsetUtil;
 import org.jetbrains.annotations.NotNull;
 
 import javax.inject.Inject;
@@ -50,6 +55,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
@@ -60,10 +66,11 @@ import java.util.concurrent.TimeoutException;
 import static java.lang.String.format;
 
 public class NettyHttpClient
-    implements HttpClient, Closeable
+        implements HttpClient, Closeable
 {
     private final Bootstrap bootstrap;
     private final EventLoopGroup group;
+
     @Inject
     public NettyHttpClient()
     {
@@ -90,6 +97,7 @@ public class NettyHttpClient
                         // Add the HttpClientCodec to the pipeline
                         ch.pipeline().addLast(new HttpClientCodec());
                         ch.pipeline().addLast(new HttpObjectAggregator(50000000));
+
                         // Add the SSL handler to the pipeline
 //                            SslContext sslCtx = SslContextBuilder.forClient()
 //                                    .keyManager(privateKey, certificateChain)
@@ -118,22 +126,37 @@ public class NettyHttpClient
             ChannelFuture channelFuture = bootstrap.connect(address);
             channelFuture.await();
             Channel channel = channelFuture.sync().channel();
-            channel.pipeline().addLast(new HttpResponseHandler(listenableFuture, responseHandler, channel));
             // Send a GET request to the server
             DefaultFullHttpRequest httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, request.getUri().toString());
+            String type = "GET";
+            if (request.getMethod() == "POST") {
+                byte[] payload = ((StaticBodyGenerator) request.getBodyGenerator()).getBody();
+                String str = new String(payload, StandardCharsets.UTF_8);
+
+                httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, request.getUri().toString());
+                httpRequest.content().writeBytes(str.getBytes(StandardCharsets.UTF_8));
+                type = "POST";
+            }
+            channel.pipeline().addLast(new HttpResponseHandler(listenableFuture, responseHandler, channel, type));
+            if (type == "POST") {
+                channel.pipeline().addLast(new LoggingOutboundHandler());
+            }
             httpRequest.headers().set("Host", request.getUri().getHost());
-            httpRequest.headers().set("Content-Type", "application/json");
+            httpRequest.headers().set("Content-Type", "application/json;charset=utf-8");
             httpRequest.headers().set("User-Agent", "NettyClient/1.0");
             httpRequest.headers().set("Accept", "*/*");
             httpRequest.headers().set("Connection", "close");
+            for (Map.Entry<String, String> entry : request.getHeaders().entries()) {
+                httpRequest.headers().set(entry.getKey(), entry.getValue());
+            }
             channel.writeAndFlush(httpRequest);
         }
         catch (Exception e) {
             System.out.println(format("http request send failure for %s. Message: %s", address.toString(), e.getMessage()));
         }
 
-        return new HttpResponseFuture(){
-
+        return new HttpResponseFuture()
+        {
             @Override
             public boolean cancel(boolean mayInterruptIfRunning)
             {
@@ -204,18 +227,45 @@ public class NettyHttpClient
         return false;
     }
 
+    private static class LoggingOutboundHandler
+            extends ChannelOutboundHandlerAdapter
+    {
+        @Override
+        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
+                throws Exception
+        {
+            if (msg instanceof FullHttpRequest) {
+                FullHttpRequest request = (FullHttpRequest) msg;
+                System.out.println("===== OUTGOING HTTP REQUEST =====");
+                System.out.println("Method: " + request.method());
+                System.out.println("URI: " + request.uri());
+                System.out.println("Headers: " + request.headers());
+
+                // Log the request body as a string
+                ByteBuf content = request.content();
+                if (content.readableBytes() > 0) {
+                    String body = content.toString(CharsetUtil.UTF_8);
+                    System.out.println("Body: " + body);
+                }
+            }
+            super.write(ctx, msg, promise);
+        }
+    }
+
     private static class HttpResponseHandler
             extends SimpleChannelInboundHandler<FullHttpResponse>
     {
         SettableFuture future;
         ResponseHandler responseHandler;
         Channel channel;
+        String requestType;
 
-        public HttpResponseHandler(SettableFuture listenableFuture, ResponseHandler responseHandler, Channel channel)
+        public HttpResponseHandler(SettableFuture listenableFuture, ResponseHandler responseHandler, Channel channel, String requestType)
         {
             this.future = listenableFuture;
             this.responseHandler = responseHandler;
             this.channel = channel;
+            this.requestType = requestType;
         }
 
         @Override
@@ -228,41 +278,51 @@ public class NettyHttpClient
 //            System.out.println("Response Headers:");
 //            System.out.println(msg.headers());
 //            // Print the response body
-//            System.out.println("Response Body:");
-//            System.out.println(msg.content().toString(io.netty.util.CharsetUtil.UTF_8));
-            future.set(responseHandler.handle(null, new Response()
-            {
-                @Override
-                public int getStatusCode()
+            System.out.println("Response Body:");
+            String res = msg.content().toString(io.netty.util.CharsetUtil.UTF_8);
+            if (requestType.equals("POST")) {
+                int a = 1;
+            }
+            System.out.println(msg.content().toString(io.netty.util.CharsetUtil.UTF_8));
+            if (msg.status().code() == 200) {
+                future.set(responseHandler.handle(null, new Response()
                 {
-                    return msg.getStatus().code();
-                }
-
-                @Override
-                public ListMultimap<HeaderName, String> getHeaders()
-                {
-                    ListMultimap<HeaderName, String> result = ArrayListMultimap.create();
-                    Iterator<Map.Entry<String, String>> iterator = msg.headers().iteratorAsString();
-                    while (iterator.hasNext()) {
-                        Map.Entry<String, String> entry = iterator.next();
-                        result.put(HeaderName.of(entry.getKey()), entry.getValue());
+                    @Override
+                    public int getStatusCode()
+                    {
+                        return msg.getStatus().code();
                     }
-                    return result;
-                }
 
-                @Override
-                public long getBytesRead()
-                {
-                    return Integer.parseInt(msg.headers().get("Content-Length"));
-                }
+                    @Override
+                    public ListMultimap<HeaderName, String> getHeaders()
+                    {
+                        ListMultimap<HeaderName, String> result = ArrayListMultimap.create();
+                        Iterator<Map.Entry<String, String>> iterator = msg.headers().iteratorAsString();
+                        while (iterator.hasNext()) {
+                            Map.Entry<String, String> entry = iterator.next();
+                            result.put(HeaderName.of(entry.getKey()), entry.getValue());
+                        }
+                        return result;
+                    }
 
-                @Override
-                public InputStream getInputStream()
-                        throws IOException
-                {
-                    return new ByteBufInputStream(msg.content());
-                }
-            }));
+                    @Override
+                    public long getBytesRead()
+                    {
+                        return Integer.parseInt(msg.headers().get("Content-Length"));
+                    }
+
+                    @Override
+                    public InputStream getInputStream()
+                            throws IOException
+                    {
+                        return new ByteBufInputStream(msg.content());
+                    }
+                }));
+            }
+            else {
+                System.out.println(format("Request type:%s failed: %s", requestType, res));
+                future.set(null);
+            }
             channel.close();
         }
     }
