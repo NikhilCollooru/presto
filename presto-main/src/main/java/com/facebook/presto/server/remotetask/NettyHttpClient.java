@@ -20,33 +20,30 @@ import com.facebook.airlift.http.client.RequestStats;
 import com.facebook.airlift.http.client.Response;
 import com.facebook.airlift.http.client.ResponseHandler;
 import com.facebook.airlift.http.client.StaticBodyGenerator;
+import com.facebook.airlift.log.Logger;
 import com.facebook.presto.server.smile.BaseResponse;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.util.concurrent.SettableFuture;
 import io.netty.bootstrap.Bootstrap;
-import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufInputStream;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelOutboundHandlerAdapter;
-import io.netty.channel.ChannelPromise;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.DefaultFullHttpRequest;
-import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
 import io.netty.handler.codec.http.HttpClientCodec;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpVersion;
-import io.netty.util.CharsetUtil;
-import org.jetbrains.annotations.NotNull;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
 
 import javax.inject.Inject;
 
@@ -56,18 +53,27 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.PrivateKey;
+import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import static com.facebook.airlift.security.pem.PemReader.loadPrivateKey;
+import static com.facebook.airlift.security.pem.PemReader.readCertificateChain;
 import static java.lang.String.format;
 
 public class NettyHttpClient
         implements HttpClient, Closeable
 {
+    private static final Logger log = Logger.get(NettyHttpClient.class);
+
     private final Bootstrap bootstrap;
     private final EventLoopGroup group;
 
@@ -75,40 +81,46 @@ public class NettyHttpClient
     public NettyHttpClient()
     {
         // Create an EventLoopGroup to handle the client's event loop
-        group = new NioEventLoopGroup(10);
+        group = new NioEventLoopGroup(200);
+        bootstrap = new Bootstrap();
 
         File keyFile = new File("/var/facebook/x509_identities/client.pem");
         File trustCertificateFile = new File("/var/facebook/rootcanal/ca.pem");
-//            List<String> ciphers = Arrays.asList("TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", "TLS_RSA_WITH_AES_256_GCM_SHA384");
-//            PrivateKey privateKey = loadPrivateKey(keyFile, Optional.of("password"));
-//            X509Certificate[] certificateChain = readCertificateChain(keyFile).toArray(new X509Certificate[0]);
-//            X509Certificate[] trustChain = readCertificateChain(trustCertificateFile).toArray(new X509Certificate[0]);
 
-        // Create a Bootstrap instance to configure the client
-        bootstrap = new Bootstrap();
-        bootstrap.group(group)
-                .channel(NioSocketChannel.class)
-                .handler(new ChannelInitializer<SocketChannel>()
-                {
-                    @Override
-                    protected void initChannel(SocketChannel ch)
-                            throws Exception
+        // Comment out the following if you want to try with HiveQueryRunner
+        List<String> ciphers = Arrays.asList("TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", "TLS_RSA_WITH_AES_256_GCM_SHA384");
+        try {
+            PrivateKey privateKey = loadPrivateKey(keyFile, Optional.of("password"));
+            X509Certificate[] certificateChain = readCertificateChain(keyFile).toArray(new X509Certificate[0]);
+            X509Certificate[] trustChain = readCertificateChain(trustCertificateFile).toArray(new X509Certificate[0]);
+            //////
+
+            // Create a Bootstrap instance to configure the client
+            bootstrap.group(group)
+                    .channel(NioSocketChannel.class)
+                    .handler(new ChannelInitializer<SocketChannel>()
                     {
-                        // Add the HttpClientCodec to the pipeline
-                        ch.pipeline().addLast(new HttpClientCodec());
-                        ch.pipeline().addLast(new HttpObjectAggregator(50000000));
+                        @Override
+                        protected void initChannel(SocketChannel ch)
+                                throws Exception
+                        {
+                            // Add the HttpClientCodec to the pipeline
+                            ch.pipeline().addLast(new HttpClientCodec());
+                            ch.pipeline().addLast(new HttpObjectAggregator(50000000));
 
-                        // Add the SSL handler to the pipeline
-//                            SslContext sslCtx = SslContextBuilder.forClient()
-//                                    .keyManager(privateKey, certificateChain)
-//                                    .trustManager(trustChain)
-//                                    .ciphers(ciphers)
-//                                    .build();
-//                            ch.pipeline().addFirst(sslCtx.newHandler(ch.alloc()));
-                        // Add a handler to print the response
-                        //ch.pipeline().addLast(new HttpResponseHandler());
-                    }
-                });
+                            // Add the SSL handler to the pipeline. Comment out this if running HiveQueryRunner
+                            SslContext sslCtx = SslContextBuilder.forClient()
+                                    .keyManager(privateKey, certificateChain)
+                                    .trustManager(trustChain)
+                                    .ciphers(ciphers)
+                                    .build();
+                            ch.pipeline().addFirst(sslCtx.newHandler(ch.alloc()));
+                        }
+                    });
+        }
+        catch (Exception e) {
+            log.error(format("NIKHIL error during bootstrap creation, Details: %s", e.getMessage()));
+        }
     }
 
     @Override
@@ -126,19 +138,18 @@ public class NettyHttpClient
             ChannelFuture channelFuture = bootstrap.connect(address);
             channelFuture.await();
             Channel channel = channelFuture.sync().channel();
+
             // Send a GET request to the server
             DefaultFullHttpRequest httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, request.getUri().toString());
-            String type = "GET";
-            if (request.getMethod() == "POST") {
+            if (request.getMethod().equals("POST")) {
                 byte[] payload = ((StaticBodyGenerator) request.getBodyGenerator()).getBody();
                 String str = new String(payload, StandardCharsets.UTF_8);
 
                 httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, request.getUri().toString());
                 httpRequest.content().writeBytes(str.getBytes(StandardCharsets.UTF_8));
-                type = "POST";
                 httpRequest.headers().setInt("Content-Length", payload.length);
             }
-            channel.pipeline().addLast(new HttpResponseHandler(listenableFuture, responseHandler, channel, type));
+            channel.pipeline().addLast(new HttpResponseHandler(listenableFuture, responseHandler, channel));
 
             httpRequest.headers().set("Host", request.getUri().getHost());
             httpRequest.headers().set("Content-Type", "application/json;charset=utf-8");
@@ -151,7 +162,7 @@ public class NettyHttpClient
             channel.writeAndFlush(httpRequest);
         }
         catch (Exception e) {
-            System.out.println(format("http request send failure for %s. Message: %s", address.toString(), e.getMessage()));
+            log.error(format("NIKHIL http request send failure for %s. Message: %s", address.toString(), e.getMessage()));
         }
 
         return new HttpResponseFuture()
@@ -182,7 +193,7 @@ public class NettyHttpClient
             }
 
             @Override
-            public Object get(long timeout, @NotNull TimeUnit unit)
+            public Object get(long timeout, TimeUnit unit)
                     throws InterruptedException, ExecutionException, TimeoutException
             {
                 return listenableFuture.get(timeout, unit);
@@ -226,45 +237,18 @@ public class NettyHttpClient
         return false;
     }
 
-    private static class LoggingOutboundHandler
-            extends ChannelOutboundHandlerAdapter
-    {
-        @Override
-        public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise)
-                throws Exception
-        {
-            if (msg instanceof FullHttpRequest) {
-                FullHttpRequest request = (FullHttpRequest) msg;
-                System.out.println("===== OUTGOING HTTP REQUEST =====");
-                System.out.println("Method: " + request.method());
-                System.out.println("URI: " + request.uri());
-                System.out.println("Headers: " + request.headers());
-
-                // Log the request body as a string
-                ByteBuf content = request.content();
-                if (content.readableBytes() > 0) {
-                    String body = content.toString(CharsetUtil.UTF_8);
-                    System.out.println("Body: " + body);
-                }
-            }
-            super.write(ctx, msg, promise);
-        }
-    }
-
     private static class HttpResponseHandler
             extends SimpleChannelInboundHandler<FullHttpResponse>
     {
         SettableFuture future;
         ResponseHandler responseHandler;
         Channel channel;
-        String requestType;
 
-        public HttpResponseHandler(SettableFuture listenableFuture, ResponseHandler responseHandler, Channel channel, String requestType)
+        public HttpResponseHandler(SettableFuture listenableFuture, ResponseHandler responseHandler, Channel channel)
         {
             this.future = listenableFuture;
             this.responseHandler = responseHandler;
             this.channel = channel;
-            this.requestType = requestType;
         }
 
         @Override
@@ -315,7 +299,7 @@ public class NettyHttpClient
                 }));
             }
             else {
-                System.out.println(format("Request type:%s failed", requestType));
+                log.error(format("NIKHIL Non-Success response from Server. Check Details: %s", msg.content().toString(io.netty.util.CharsetUtil.UTF_8)));
                 future.set(null);
             }
             channel.close();

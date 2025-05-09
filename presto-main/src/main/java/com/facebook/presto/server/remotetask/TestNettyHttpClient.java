@@ -1,3 +1,16 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.facebook.presto.server.remotetask;
 
 import io.netty.bootstrap.Bootstrap;
@@ -41,6 +54,9 @@ import static com.facebook.airlift.security.pem.PemReader.readCertificateChain;
 
 public class TestNettyHttpClient
 {
+    private TestNettyHttpClient()
+    {}
+
     public static void main(String[] args)
             throws Exception
     {
@@ -80,9 +96,11 @@ public class TestNettyHttpClient
                     });
             System.out.println("here1");
 
-            ChannelPoolMap<InetSocketAddress, SimpleChannelPool> poolMap = new AbstractChannelPoolMap<InetSocketAddress, SimpleChannelPool>() {
+            ChannelPoolMap<InetSocketAddress, SimpleChannelPool> poolMap = new AbstractChannelPoolMap<InetSocketAddress, SimpleChannelPool>()
+            {
                 @Override
-                protected SimpleChannelPool newPool(InetSocketAddress key) {
+                protected SimpleChannelPool newPool(InetSocketAddress key)
+                {
                     return new SimpleChannelPool(bootstrap.remoteAddress(key), null);
                 }
             };
@@ -94,9 +112,11 @@ public class TestNettyHttpClient
             // depending on when you use addr1 or addr2 you will get different pools.
             final SimpleChannelPool pool = poolMap.get(new InetSocketAddress(host, port));
             Future<Channel> f = pool.acquire();
-            f.addListener(new FutureListener<Channel>() {
+            f.addListener(new FutureListener<Channel>()
+            {
                 @Override
-                public void operationComplete(Future<Channel> f) {
+                public void operationComplete(Future<Channel> f)
+                {
                     if (f.isSuccess()) {
                         Channel channel = f.getNow();
                         System.out.println("inside");
