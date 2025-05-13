@@ -28,13 +28,15 @@ import com.google.common.util.concurrent.SettableFuture;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBufInputStream;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.channel.socket.SocketChannel;
+import io.netty.channel.pool.AbstractChannelPoolHandler;
+import io.netty.channel.pool.AbstractChannelPoolMap;
+import io.netty.channel.pool.ChannelPool;
+import io.netty.channel.pool.ChannelPoolMap;
+import io.netty.channel.pool.FixedChannelPool;
 import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.DefaultFullHttpRequest;
 import io.netty.handler.codec.http.FullHttpResponse;
@@ -42,8 +44,8 @@ import io.netty.handler.codec.http.HttpClientCodec;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpVersion;
-import io.netty.handler.ssl.SslContext;
-import io.netty.handler.ssl.SslContextBuilder;
+import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.FutureListener;
 
 import javax.inject.Inject;
 
@@ -52,7 +54,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
@@ -77,12 +78,17 @@ public class NettyHttpClient
     private final Bootstrap bootstrap;
     private final EventLoopGroup group;
 
+    // Map with key: inetAddress, value : FixeChannelPool
+    // Max connections per address is 250. Meaning coordinator can hold upto 250 connections per worker
+    private final ChannelPoolMap<InetSocketAddress, FixedChannelPool> poolMap;
+
     @Inject
     public NettyHttpClient()
     {
         // Create an EventLoopGroup to handle the client's event loop
-        group = new NioEventLoopGroup(200);
-        bootstrap = new Bootstrap();
+        //this.group = new EpollEventLoopGroup(10);
+        this.group = new NioEventLoopGroup(5);
+        this.bootstrap = new Bootstrap();
 
         File keyFile = new File("/var/facebook/x509_identities/client.pem");
         File trustCertificateFile = new File("/var/facebook/rootcanal/ca.pem");
@@ -96,31 +102,39 @@ public class NettyHttpClient
             //////
 
             // Create a Bootstrap instance to configure the client
-            bootstrap.group(group)
-                    .channel(NioSocketChannel.class)
-                    .handler(new ChannelInitializer<SocketChannel>()
-                    {
-                        @Override
-                        protected void initChannel(SocketChannel ch)
-                                throws Exception
-                        {
-                            // Add the HttpClientCodec to the pipeline
-                            ch.pipeline().addLast(new HttpClientCodec());
-                            ch.pipeline().addLast(new HttpObjectAggregator(50000000));
-
-                            // Add the SSL handler to the pipeline. Comment out this if running HiveQueryRunner
-                            SslContext sslCtx = SslContextBuilder.forClient()
-                                    .keyManager(privateKey, certificateChain)
-                                    .trustManager(trustChain)
-                                    .ciphers(ciphers)
-                                    .build();
-                            ch.pipeline().addFirst(sslCtx.newHandler(ch.alloc()));
-                        }
-                    });
+            bootstrap.group(group).channel(NioSocketChannel.class);
         }
         catch (Exception e) {
             log.error(format("NIKHIL error during bootstrap creation, Details: %s", e.getMessage()));
         }
+
+        // Channel Handler provided to Channel Pool will override the channel initializer provided to the bootstrap
+        this.poolMap = new AbstractChannelPoolMap<InetSocketAddress, FixedChannelPool>()
+        {
+            @Override
+            protected FixedChannelPool newPool(InetSocketAddress key)
+            {
+                return new FixedChannelPool(bootstrap.remoteAddress(key), new AbstractChannelPoolHandler()
+                {
+                    @Override
+                    public void channelCreated(Channel ch)
+                            throws Exception
+                    {
+                        // Add the HttpClientCodec to the pipeline
+                        ch.pipeline().addLast(new HttpClientCodec());
+                        ch.pipeline().addLast(new HttpObjectAggregator(50000000));
+
+                        // Add the SSL handler to the pipeline. Comment out this if running HiveQueryRunner
+//                            SslContext sslCtx = SslContextBuilder.forClient()
+//                                    .keyManager(privateKey, certificateChain)
+//                                    .trustManager(trustChain)
+//                                    .ciphers(ciphers)
+//                                    .build();
+//                            ch.pipeline().addFirst(sslCtx.newHandler(ch.alloc()));
+                    }
+                }, 10);
+            }
+        };
     }
 
     @Override
@@ -135,31 +149,58 @@ public class NettyHttpClient
         SettableFuture<BaseResponse<T>> listenableFuture = SettableFuture.create();
         InetSocketAddress address = new InetSocketAddress(request.getUri().getHost(), request.getUri().getPort());
         try {
-            ChannelFuture channelFuture = bootstrap.connect(address);
-            channelFuture.await();
-            Channel channel = channelFuture.sync().channel();
+            FixedChannelPool pool = poolMap.get(address);
+            Future<Channel> f = pool.acquire();
+            f.addListener(new FutureListener<Channel>()
+            {
+                @Override
+                public void operationComplete(Future<Channel> f)
+                {
+                    if (f.isSuccess()) {
+                        // Successfully acquired a channel from the pool
+                        Channel channel = f.getNow();
 
-            // Send a GET request to the server
-            DefaultFullHttpRequest httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, request.getUri().toString());
-            if (request.getMethod().equals("POST")) {
-                byte[] payload = ((StaticBodyGenerator) request.getBodyGenerator()).getBody();
-                String str = new String(payload, StandardCharsets.UTF_8);
+                        // Send a GET request to the server
+                        DefaultFullHttpRequest httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET, request.getUri().toString());
 
-                httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, request.getUri().toString());
-                httpRequest.content().writeBytes(str.getBytes(StandardCharsets.UTF_8));
-                httpRequest.headers().setInt("Content-Length", payload.length);
-            }
-            channel.pipeline().addLast(new HttpResponseHandler(listenableFuture, responseHandler, channel));
+                        // If its a POST request update the content and content-length
+                        if (request.getMethod().equals("POST")) {
+                            byte[] payload = ((StaticBodyGenerator) request.getBodyGenerator()).getBody();
 
-            httpRequest.headers().set("Host", request.getUri().getHost());
-            httpRequest.headers().set("Content-Type", "application/json;charset=utf-8");
-            httpRequest.headers().set("User-Agent", "NettyClient/1.0");
-            httpRequest.headers().set("Accept", "*/*");
-            httpRequest.headers().set("Connection", "close");
-            for (Map.Entry<String, String> entry : request.getHeaders().entries()) {
-                httpRequest.headers().set(entry.getKey(), entry.getValue());
-            }
-            channel.writeAndFlush(httpRequest);
+                            // Create a new POST httpRequest
+                            httpRequest = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.POST, request.getUri().toString());
+
+                            // Write the POST payload into content field of the request
+                            httpRequest.content().writeBytes(payload);
+
+                            // Add content length as header, else the server will think nothing is there in content
+                            httpRequest.headers().setInt("Content-Length", payload.length);
+                        }
+
+                        // Response Handler. Call the de-serializer to unwrap the response json
+                        channel.pipeline().addLast(new HttpResponseHandler(listenableFuture, responseHandler, channel, pool));
+
+                        // Add all the headers
+                        httpRequest.headers().set("Host", request.getUri().getHost());
+                        httpRequest.headers().set("Content-Type", "application/json;charset=utf-8");
+                        httpRequest.headers().set("User-Agent", "NettyClient/1.0");
+                        httpRequest.headers().set("Accept", "*/*");
+
+                        // Do not close the connection when using connection pool. Because the whole point is to save connection create cost
+                        // httpRequest.headers().set("Connection", "close");
+                        
+                        for (Map.Entry<String, String> entry : request.getHeaders().entries()) {
+                            httpRequest.headers().set(entry.getKey(), entry.getValue());
+                        }
+
+                        // Send the request to server
+                        channel.writeAndFlush(httpRequest);
+                    }
+                    else {
+                        log.error("NIKHIL failed to acquire a channel from the pool");
+                    }
+                }
+            });
         }
         catch (Exception e) {
             log.error(format("NIKHIL http request send failure for %s. Message: %s", address.toString(), e.getMessage()));
@@ -243,12 +284,14 @@ public class NettyHttpClient
         SettableFuture future;
         ResponseHandler responseHandler;
         Channel channel;
+        ChannelPool pool;
 
-        public HttpResponseHandler(SettableFuture listenableFuture, ResponseHandler responseHandler, Channel channel)
+        public HttpResponseHandler(SettableFuture listenableFuture, ResponseHandler responseHandler, Channel channel, ChannelPool pool)
         {
             this.future = listenableFuture;
             this.responseHandler = responseHandler;
             this.channel = channel;
+            this.pool = pool;
         }
 
         @Override
@@ -264,7 +307,7 @@ public class NettyHttpClient
 //            System.out.println("Response Body:");
 //            System.out.println(msg.content().toString(io.netty.util.CharsetUtil.UTF_8));
             if (msg.status().code() == 200) {
-                future.set(responseHandler.handle(null, new Response()
+                boolean result = future.set(responseHandler.handle(null, new Response()
                 {
                     @Override
                     public int getStatusCode()
@@ -297,12 +340,21 @@ public class NettyHttpClient
                         return new ByteBufInputStream(msg.content());
                     }
                 }));
+
+                if(!result) {
+                    log.error("NIKHIL error setting the server result on the future");
+                }
+
+                // Remove the response handler (HttpResponseHandler) from pipeline before releasing the channel back to pool
+                channel.pipeline().removeLast();
+
+                // release channel
+                pool.release(channel);
             }
             else {
                 log.error(format("NIKHIL Non-Success response from Server. Check Details: %s", msg.content().toString(io.netty.util.CharsetUtil.UTF_8)));
                 future.set(null);
             }
-            channel.close();
         }
     }
 }
