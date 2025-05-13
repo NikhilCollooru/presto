@@ -104,6 +104,11 @@ public class TaskManagerConfig
     private boolean enableEventLoop;
     private Duration slowMethodThresholdOnEventLoop = new Duration(0, SECONDS);
 
+    private boolean nettyEpollEnabled;
+    private int nettyEventLoopThreadCount = 200;
+    private int nettyMaxConnectionsPerDestination = 250;
+    private int nettyChannelAcquireWaitTime = 200;
+
     public long getSlowMethodThresholdOnEventLoop()
     {
         return slowMethodThresholdOnEventLoop.roundTo(NANOSECONDS);
@@ -704,6 +709,54 @@ public class TaskManagerConfig
     public TaskManagerConfig setTaskUpdateSizeTrackingEnabled(boolean taskUpdateSizeTrackingEnabled)
     {
         this.taskUpdateSizeTrackingEnabled = taskUpdateSizeTrackingEnabled;
+        return this;
+    }
+
+    public boolean isNettyEpollEnabled()
+    {
+        return nettyEpollEnabled;
+    }
+
+    @Config("task.netty-epoll-enabled")
+    public TaskManagerConfig setNettyEpollEnabled(boolean nettyEpollEnabled)
+    {
+        this.nettyEpollEnabled = nettyEpollEnabled;
+        return this;
+    }
+
+    public int getNettyEventLoopThreadCount()
+    {
+        return nettyEventLoopThreadCount;
+    }
+
+    @Config("task.netty-event-loop-thread-count")
+    public TaskManagerConfig setNettyEventLoopThreadCount(int nettyEventLoopThreadCount)
+    {
+        this.nettyEventLoopThreadCount = nettyEventLoopThreadCount;
+        return this;
+    }
+
+    public int getNettyMaxConnectionsPerDestination()
+    {
+        return nettyMaxConnectionsPerDestination;
+    }
+
+    @Config("task.netty-max-connections-per-destination")
+    public TaskManagerConfig setNettyMaxConnectionsPerDestination(int nettyMaxConnectionsPerDestination)
+    {
+        this.nettyMaxConnectionsPerDestination = nettyMaxConnectionsPerDestination;
+        return this;
+    }
+
+    public int getNettyChannelAcquireWaitTime()
+    {
+        return nettyChannelAcquireWaitTime;
+    }
+
+    @Config("task.netty-channel-acquire-wait-time")
+    public TaskManagerConfig setNettyChannelAcquireWaitTime(int nettyChannelAcquireWaitTime)
+    {
+        this.nettyChannelAcquireWaitTime = nettyChannelAcquireWaitTime;
         return this;
     }
 }

@@ -21,6 +21,7 @@ import com.facebook.airlift.http.client.Response;
 import com.facebook.airlift.http.client.ResponseHandler;
 import com.facebook.airlift.http.client.StaticBodyGenerator;
 import com.facebook.airlift.log.Logger;
+import com.facebook.presto.execution.TaskManagerConfig;
 import com.facebook.presto.server.smile.BaseResponse;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
@@ -31,9 +32,12 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
+import io.netty.channel.epoll.EpollEventLoopGroup;
+import io.netty.channel.epoll.EpollSocketChannel;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.pool.AbstractChannelPoolHandler;
 import io.netty.channel.pool.AbstractChannelPoolMap;
+import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.ChannelPool;
 import io.netty.channel.pool.ChannelPoolMap;
 import io.netty.channel.pool.FixedChannelPool;
@@ -44,6 +48,8 @@ import io.netty.handler.codec.http.HttpClientCodec;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.ssl.SslContext;
+import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.FutureListener;
 
@@ -77,18 +83,28 @@ public class NettyHttpClient
 
     private final Bootstrap bootstrap;
     private final EventLoopGroup group;
+    private SslContext sslContext;
 
     // Map with key: inetAddress, value : FixeChannelPool
-    // Max connections per address is 250. Meaning coordinator can hold upto 250 connections per worker
     private final ChannelPoolMap<InetSocketAddress, FixedChannelPool> poolMap;
 
     @Inject
-    public NettyHttpClient()
+    public NettyHttpClient(TaskManagerConfig config)
     {
-        // Create an EventLoopGroup to handle the client's event loop
-        //this.group = new EpollEventLoopGroup(10);
-        this.group = new NioEventLoopGroup(5);
+        int threadCount = config.getNettyEventLoopThreadCount();
+
         this.bootstrap = new Bootstrap();
+
+        // Create an EventLoopGroup to handle the client's event loop
+        if (config.isNettyEpollEnabled()) {
+            this.group = new EpollEventLoopGroup(threadCount);
+            // Create a Bootstrap instance to configure the client
+            bootstrap.group(group).channel(EpollSocketChannel.class);
+        }
+        else {
+            this.group = new NioEventLoopGroup(threadCount);
+            bootstrap.group(group).channel(NioSocketChannel.class);
+        }
 
         File keyFile = new File("/var/facebook/x509_identities/client.pem");
         File trustCertificateFile = new File("/var/facebook/rootcanal/ca.pem");
@@ -99,14 +115,17 @@ public class NettyHttpClient
             PrivateKey privateKey = loadPrivateKey(keyFile, Optional.of("password"));
             X509Certificate[] certificateChain = readCertificateChain(keyFile).toArray(new X509Certificate[0]);
             X509Certificate[] trustChain = readCertificateChain(trustCertificateFile).toArray(new X509Certificate[0]);
-            //////
-
-            // Create a Bootstrap instance to configure the client
-            bootstrap.group(group).channel(NioSocketChannel.class);
+            this.sslContext = SslContextBuilder.forClient()
+                    .keyManager(privateKey, certificateChain)
+                    .trustManager(trustChain)
+                    .ciphers(ciphers)
+                    .build();
         }
         catch (Exception e) {
             log.error(format("NIKHIL error during bootstrap creation, Details: %s", e.getMessage()));
         }
+
+        int maxConnectionsPerDestination = config.getNettyMaxConnectionsPerDestination();
 
         // Channel Handler provided to Channel Pool will override the channel initializer provided to the bootstrap
         this.poolMap = new AbstractChannelPoolMap<InetSocketAddress, FixedChannelPool>()
@@ -125,14 +144,9 @@ public class NettyHttpClient
                         ch.pipeline().addLast(new HttpObjectAggregator(50000000));
 
                         // Add the SSL handler to the pipeline. Comment out this if running HiveQueryRunner
-//                            SslContext sslCtx = SslContextBuilder.forClient()
-//                                    .keyManager(privateKey, certificateChain)
-//                                    .trustManager(trustChain)
-//                                    .ciphers(ciphers)
-//                                    .build();
-//                            ch.pipeline().addFirst(sslCtx.newHandler(ch.alloc()));
+                        ch.pipeline().addFirst(sslContext.newHandler(ch.alloc()));
                     }
-                }, 10);
+                }, ChannelHealthChecker.ACTIVE, FixedChannelPool.AcquireTimeoutAction.NEW, config.getNettyChannelAcquireWaitTime(), maxConnectionsPerDestination, Integer.MAX_VALUE);
             }
         };
     }
@@ -186,9 +200,10 @@ public class NettyHttpClient
                         httpRequest.headers().set("User-Agent", "NettyClient/1.0");
                         httpRequest.headers().set("Accept", "*/*");
 
-                        // Do not close the connection when using connection pool. Because the whole point is to save connection create cost
+                        // Do not close the connection when using connection pool. Because the whole point is to save connection creation cost
                         // httpRequest.headers().set("Connection", "close");
-                        
+                        httpRequest.headers().set("Connection", "keep-alive");
+
                         for (Map.Entry<String, String> entry : request.getHeaders().entries()) {
                             httpRequest.headers().set(entry.getKey(), entry.getValue());
                         }
@@ -197,7 +212,7 @@ public class NettyHttpClient
                         channel.writeAndFlush(httpRequest);
                     }
                     else {
-                        log.error("NIKHIL failed to acquire a channel from the pool");
+                        log.error(format("NIKHIL failed to acquire a channel from the pool. reason: %s", f.cause().getMessage()));
                     }
                 }
             });
@@ -307,6 +322,17 @@ public class NettyHttpClient
 //            System.out.println("Response Body:");
 //            System.out.println(msg.content().toString(io.netty.util.CharsetUtil.UTF_8));
             if (msg.status().code() == 200) {
+                boolean isDone = false;
+                boolean isCancelled = false;
+                if (future.isDone()) {
+                    isDone = true;
+                    log.error("NIKHIL future already done");
+                }
+                if (future.isCancelled()) {
+                    isCancelled = true;
+                    log.error("NIKHIL future is cancelled");
+                }
+
                 boolean result = future.set(responseHandler.handle(null, new Response()
                 {
                     @Override
@@ -341,20 +367,20 @@ public class NettyHttpClient
                     }
                 }));
 
-                if(!result) {
-                    log.error("NIKHIL error setting the server result on the future");
+                if (!result) {
+                    log.error(format("NIKHIL error setting the server result on the future. isDone: %s, isCancelled: %s", isDone, isCancelled));
                 }
-
-                // Remove the response handler (HttpResponseHandler) from pipeline before releasing the channel back to pool
-                channel.pipeline().removeLast();
-
-                // release channel
-                pool.release(channel);
             }
             else {
                 log.error(format("NIKHIL Non-Success response from Server. Check Details: %s", msg.content().toString(io.netty.util.CharsetUtil.UTF_8)));
                 future.set(null);
             }
+
+            // Remove the response handler (HttpResponseHandler) from pipeline before releasing the channel back to pool
+            channel.pipeline().removeLast();
+
+            // release channel
+            pool.release(channel);
         }
     }
 }
