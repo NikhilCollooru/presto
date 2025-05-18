@@ -84,7 +84,7 @@ import com.facebook.presto.server.protocol.QueryBlockingRateLimiter;
 import com.facebook.presto.server.protocol.QueuedStatementResource;
 import com.facebook.presto.server.protocol.RetryCircuitBreaker;
 import com.facebook.presto.server.remotetask.HttpRemoteTaskFactory;
-import com.facebook.presto.server.remotetask.NettyHttpClient;
+import com.facebook.presto.server.remotetask.NettyHttp2Client;
 import com.facebook.presto.server.remotetask.RemoteTaskStats;
 import com.facebook.presto.spi.memory.ClusterMemoryPoolManager;
 import com.facebook.presto.spi.security.SelectedRole;
@@ -144,7 +144,7 @@ public class CoordinatorModule
 {
     private static final String DEFAULT_WEBUI_CSP =
             "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-            "font-src 'self' https://fonts.gstatic.com; frame-ancestors 'self'; img-src http: https: data:";
+                    "font-src 'self' https://fonts.gstatic.com; frame-ancestors 'self'; img-src http: https: data:";
 
     private HttpResourceBinding webUIBinder(Binder binder, String path, String classPathResourceBase)
     {
@@ -277,8 +277,8 @@ public class CoordinatorModule
 //                    config.setRequestTimeout(new Duration(10, SECONDS));
 //                    config.setMaxConnectionsPerServer(250);
 //                });
-        binder.bind(NettyHttpClient.class).in(Scopes.SINGLETON);
-        binder.bind(HttpClient.class).annotatedWith(ForScheduler.class).to(NettyHttpClient.class);
+        binder.bind(NettyHttp2Client.class).in(Scopes.SINGLETON);
+        binder.bind(HttpClient.class).annotatedWith(ForScheduler.class).to(NettyHttp2Client.class);
 
         binder.bind(ScheduledExecutorService.class).annotatedWith(ForScheduler.class)
                 .toInstance(newSingleThreadScheduledExecutor(threadsNamed("stage-scheduler")));

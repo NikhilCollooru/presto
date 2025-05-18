@@ -24,6 +24,7 @@ import io.airlift.units.DataSize.Unit;
 import io.airlift.units.Duration;
 import io.airlift.units.MaxDuration;
 import io.airlift.units.MinDuration;
+import io.netty.handler.ssl.ApplicationProtocolConfig.Protocol;
 
 import javax.validation.constraints.DecimalMax;
 import javax.validation.constraints.DecimalMin;
@@ -105,9 +106,12 @@ public class TaskManagerConfig
     private Duration slowMethodThresholdOnEventLoop = new Duration(0, SECONDS);
 
     private boolean nettyEpollEnabled;
+    private boolean nettyHttp2Enabled;
     private int nettyEventLoopThreadCount = 200;
     private int nettyMaxConnectionsPerDestination = 250;
+    private int nettyMaxStreamPerChannel = 50;
     private int nettyChannelAcquireWaitTime = 200;
+    private Protocol nettyApplicationProtocol = Protocol.NPN;
 
     public long getSlowMethodThresholdOnEventLoop()
     {
@@ -724,6 +728,18 @@ public class TaskManagerConfig
         return this;
     }
 
+    public boolean isNettyHttp2Enabled()
+    {
+        return nettyHttp2Enabled;
+    }
+
+    @Config("task.netty-http2-enabled")
+    public TaskManagerConfig setNettyHttp2Enabled(boolean nettyHttp2Enabled)
+    {
+        this.nettyHttp2Enabled = nettyHttp2Enabled;
+        return this;
+    }
+
     public int getNettyEventLoopThreadCount()
     {
         return nettyEventLoopThreadCount;
@@ -745,6 +761,30 @@ public class TaskManagerConfig
     public TaskManagerConfig setNettyMaxConnectionsPerDestination(int nettyMaxConnectionsPerDestination)
     {
         this.nettyMaxConnectionsPerDestination = nettyMaxConnectionsPerDestination;
+        return this;
+    }
+
+    public int getNettyMaxStreamPerChannel()
+    {
+        return nettyMaxStreamPerChannel;
+    }
+
+    @Config("task.netty-max-stream-per-channel")
+    public TaskManagerConfig setNettyMaxStreamPerChannel(int nettyMaxStreamPerChannel)
+    {
+        this.nettyMaxStreamPerChannel = nettyMaxStreamPerChannel;
+        return this;
+    }
+
+    public Protocol getNettyApplicationProtocol()
+    {
+        return nettyApplicationProtocol;
+    }
+
+    @Config("task.netty-application-protocol")
+    public TaskManagerConfig setNettyApplicationProtocol(String nettyApplicationProtocol)
+    {
+        this.nettyApplicationProtocol = Protocol.valueOf(nettyApplicationProtocol);
         return this;
     }
 
