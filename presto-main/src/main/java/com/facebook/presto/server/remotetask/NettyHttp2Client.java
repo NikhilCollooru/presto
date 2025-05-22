@@ -75,6 +75,7 @@ import java.net.InetSocketAddress;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -211,7 +212,7 @@ public class NettyHttp2Client
                         // create a stream channel from channel
                         Http2StreamChannelBootstrap streamChannelBootstrap = new Http2StreamChannelBootstrap(channel);
                         Http2StreamChannel streamChannel = streamChannelBootstrap.open().syncUninterruptibly().getNow();
-                        log.error("KAIZER-1 stream created");
+                        log.error("NIKHIL stream created");
 
                         // Increment stream count
                         channelStreamCountMap.put(channel, channelStreamCountMap.getOrDefault(channel, 0) + 1);
@@ -383,14 +384,16 @@ public class NettyHttp2Client
             int statusCode = -1;
             ByteBuf content = null;
             int contentLength = 0;
+            Http2Headers headers = null;
 
             for (Http2StreamFrame frame : frames) {
                 if (frame instanceof Http2HeadersFrame) {
-                    Http2Headers headers = ((Http2HeadersFrame) frame).headers();
+                    headers = ((Http2HeadersFrame) frame).headers();
                     statusCode = Integer.parseInt(headers.status().toString());
                     for (Entry<CharSequence, CharSequence> entry : headers) {
                         if (entry.getKey().toString().equalsIgnoreCase("content-length")) {
                             contentLength = Integer.parseInt(entry.getValue().toString());
+                            log.error(format("NIKHIL content length: %d", contentLength));
                         }
                     }
                 }
@@ -399,12 +402,19 @@ public class NettyHttp2Client
                 }
             }
 
+            byte[] contentResult = new byte[contentLength];
+            if (content != null) {
+                content.getBytes(0, contentResult, 0, contentLength);
+                log.error(format("NIKHIL content.readableBytes: %d, contentLength: %d, content: %s", content.readableBytes(), contentLength, Arrays.toString(contentResult)));
+            }
+
             if (statusCode == 200) {
-                log.error("KAIZER received 200 status OK");
+                log.error(format("NIKHIL received 200 status OK, content:%s", Arrays.toString(contentResult)));
                 int finalStatusCode = statusCode;
-                ByteBuf finalContent = content;
                 int finalContentLength = contentLength;
 
+                ByteBuf finalContent = content;
+                Http2Headers finalHeaders = headers;
                 boolean result = future.set(responseHandler.handle(null, new Response()
                 {
                     @Override
@@ -416,7 +426,21 @@ public class NettyHttp2Client
                     @Override
                     public ListMultimap<HeaderName, String> getHeaders()
                     {
-                        return ArrayListMultimap.create();
+                        ListMultimap<HeaderName, String> result = ArrayListMultimap.create();
+                        Iterator<Entry<CharSequence, CharSequence>> iterator = finalHeaders.iterator();
+                        while (iterator.hasNext()) {
+                            Entry<CharSequence, CharSequence> entry = iterator.next();
+                            if (entry.getKey().toString().equalsIgnoreCase("Content-Type")) {
+                                result.put(HeaderName.of("Content-Type"), entry.getValue().toString());
+                            }
+                            else if (entry.getKey().toString().equalsIgnoreCase("Content-Length")) {
+                                result.put(HeaderName.of("Content-Length"), entry.getValue().toString());
+                            }
+                            else {
+                                result.put(HeaderName.of(entry.getKey().toString()), entry.getValue().toString());
+                            }
+                        }
+                        return result;
                     }
 
                     @Override
