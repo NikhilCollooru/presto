@@ -213,6 +213,7 @@ class ContinuousTaskStatusFetcher
     public void success(TaskStatus value)
     {
         try (SetThreadName ignored = new SetThreadName("ContinuousTaskStatusFetcher-%s", taskId)) {
+            log.error(format("NIKHIL TaskStatus success taskStatus: %s", value.toString()));
             updateStats(currentRequestStartNanos.get());
             try {
                 updateTaskStatus(value);
@@ -228,6 +229,7 @@ class ContinuousTaskStatusFetcher
     public void failed(Throwable cause)
     {
         try (SetThreadName ignored = new SetThreadName("ContinuousTaskStatusFetcher-%s", taskId)) {
+            log.error(format("NIKHIL TaskStatus failed cause: %s", cause.toString()));
             updateStats(currentRequestStartNanos.get());
             try {
                 // if task not already done, record error

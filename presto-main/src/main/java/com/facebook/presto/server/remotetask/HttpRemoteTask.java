@@ -1145,6 +1145,7 @@ public final class HttpRemoteTask
         {
             try (SetThreadName ignored = new SetThreadName("UpdateResponseHandler-%s", taskId)) {
                 try {
+                    log.error(format("NIKHIL UpdateResponseHandler.success() TaskInfo: %s", value.toString()));
                     long oldestTaskUpdateTime = 0;
                     long currentRequestStartNanos;
                     synchronized (HttpRemoteTask.this) {
@@ -1178,6 +1179,7 @@ public final class HttpRemoteTask
         {
             try (SetThreadName ignored = new SetThreadName("UpdateResponseHandler-%s", taskId)) {
                 try {
+                    log.error(format("NIKHIL UpdateResponseHandler.failed throwableMessage: %s", cause.getMessage()));
                     long currentRequestStartNanos;
                     synchronized (HttpRemoteTask.this) {
                         currentRequest = null;

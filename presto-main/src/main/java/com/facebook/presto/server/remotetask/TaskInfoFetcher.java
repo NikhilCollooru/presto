@@ -24,6 +24,7 @@ import com.facebook.airlift.http.client.thrift.ThriftResponseHandler;
 import com.facebook.airlift.json.Codec;
 import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.json.smile.SmileCodec;
+import com.facebook.airlift.log.Logger;
 import com.facebook.drift.transport.netty.codec.Protocol;
 import com.facebook.presto.Session;
 import com.facebook.presto.connector.ConnectorTypeSerdeManager;
@@ -72,12 +73,15 @@ import static com.facebook.presto.server.smile.FullSmileResponseHandler.createFu
 import static com.facebook.presto.server.thrift.ThriftCodecWrapper.unwrapThriftCodec;
 import static com.facebook.presto.spi.StandardErrorCode.REMOTE_TASK_ERROR;
 import static io.airlift.units.Duration.nanosSince;
+import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class TaskInfoFetcher
         implements SimpleHttpResponseCallback<TaskInfo>
 {
+    private static final Logger log = Logger.get(TaskInfoFetcher.class);
+
     private final TaskId taskId;
     private final Consumer<Throwable> onFail;
     private final StateMachine<TaskInfo> taskInfo;
@@ -339,7 +343,7 @@ public class TaskInfoFetcher
     {
         try (SetThreadName ignored = new SetThreadName("TaskInfoFetcher-%s", taskId)) {
             lastUpdateNanos.set(System.nanoTime());
-
+            log.error(format("NIKHIL TaskInfoFetcher success taskInfo: %s", newValue.toString()));
             long startNanos;
             synchronized (this) {
                 startNanos = this.currentRequestStartNanos.get();
@@ -358,6 +362,7 @@ public class TaskInfoFetcher
     {
         try (SetThreadName ignored = new SetThreadName("TaskInfoFetcher-%s", taskId)) {
             lastUpdateNanos.set(System.nanoTime());
+            log.error(format("NIKHIL TaskInfoFetcher Failed causeMessage: %s", cause.toString()));
 
             try {
                 // if task not already done, record error

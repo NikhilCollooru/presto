@@ -72,6 +72,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -405,11 +406,11 @@ public class NettyHttp2Client
             byte[] contentResult = new byte[contentLength];
             if (content != null) {
                 content.getBytes(0, contentResult, 0, contentLength);
-                log.error(format("NIKHIL content.readableBytes: %d, contentLength: %d, content: %s", content.readableBytes(), contentLength, Arrays.toString(contentResult)));
+                log.error(format("NIKHIL content.readableBytes: %d, contentLength: %d, content: %s", content.readableBytes(), contentLength, new String(contentResult, StandardCharsets.UTF_8)));
             }
 
             if (statusCode == 200) {
-                log.error(format("NIKHIL received 200 status OK, content:%s", Arrays.toString(contentResult)));
+                log.error(format("NIKHIL received 200 status OK, content:%s", new String(contentResult, StandardCharsets.UTF_8)));
                 int finalStatusCode = statusCode;
                 int finalContentLength = contentLength;
 

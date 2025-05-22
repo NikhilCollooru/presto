@@ -210,7 +210,7 @@ class ContinuousTaskStatusFetcherWithEventLoop
     public void success(TaskStatus value)
     {
         verify(taskEventLoop.inEventLoop());
-
+        log.error(format("NIKHIL loop TaskStatus success taskStatus: %s", value.toString()));
         updateStats(currentRequestStartNanos);
         try {
             updateTaskStatus(value);
@@ -225,7 +225,7 @@ class ContinuousTaskStatusFetcherWithEventLoop
     public void failed(Throwable cause)
     {
         verify(taskEventLoop.inEventLoop());
-
+        log.error(format("NIKHIL loop TaskStatus failed cause: %s", cause.toString()));
         updateStats(currentRequestStartNanos);
         try {
             // if task not already done, record error

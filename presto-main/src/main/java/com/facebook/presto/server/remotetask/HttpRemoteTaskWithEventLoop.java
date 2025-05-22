@@ -1269,6 +1269,7 @@ public final class HttpRemoteTaskWithEventLoop
             verify(taskEventLoop.inEventLoop());
 
             try {
+                log.error(format("NIKHIL loop UpdateResponseHandler.success() TaskInfo: %s", value.toString()));
                 long oldestTaskUpdateTime = 0;
                 currentRequest = null;
                 sendPlan = value.isNeedsPlan();
@@ -1299,6 +1300,7 @@ public final class HttpRemoteTaskWithEventLoop
             verify(taskEventLoop.inEventLoop());
 
             try {
+                log.error(format("NIKHIL loop UpdateResponseHandler.failed throwableMessage: %s", cause.toString()));
                 long currentRequestStartNanos;
                 currentRequest = null;
                 currentRequestStartNanos = HttpRemoteTaskWithEventLoop.this.currentRequestStartNanos;
