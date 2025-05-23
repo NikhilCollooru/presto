@@ -224,7 +224,6 @@ public class NettyHttp2Client
 
                         // Send request (a HTTP/2 HEADERS frame - with ':method = GET' in this case)
                         DefaultHttp2Headers headers = new DefaultHttp2Headers();
-                        headers.method("GET");
                         headers.path(request.getUri().toString());
                         headers.scheme("https");
                         for (Entry<String, String> entry : request.getHeaders().entries()) {
@@ -237,14 +236,21 @@ public class NettyHttp2Client
                         }
 
                         if (request.getMethod().equals("GET")) {
+                            headers.method("GET");
+                            DefaultHttp2HeadersFrame hfr = new DefaultHttp2HeadersFrame(headers, true);
+                            log.error(format("NIKHIL GET http2HeaderFrame: %s, request: %s", hfr, request));
                             // Send headers-only request
-                            streamChannel.writeAndFlush(new DefaultHttp2HeadersFrame(headers, true));
+                            streamChannel.writeAndFlush(hfr);
                         }
                         else if (request.getMethod().equals("POST")) {
+                            headers.method("POST");
                             // Send headers followed by data
-                            streamChannel.write(new DefaultHttp2HeadersFrame(headers, false));
+                            DefaultHttp2HeadersFrame hfr = new DefaultHttp2HeadersFrame(headers, false);
+                            streamChannel.write(hfr);
                             byte[] payload = ((StaticBodyGenerator) request.getBodyGenerator()).getBody();
-                            streamChannel.writeAndFlush(new DefaultHttp2DataFrame(Unpooled.copiedBuffer(payload), true));
+                            DefaultHttp2DataFrame dfr = new DefaultHttp2DataFrame(Unpooled.copiedBuffer(payload), true);
+                            log.error(format("NIKHIL POST request: %s,  http2HeaderFrame: %s, http2DataFrame: %s", request, hfr, dfr));
+                            streamChannel.writeAndFlush(dfr);
                         }
 
                         int streamCount = channelStreamCountMap.getOrDefault(channel, 0);

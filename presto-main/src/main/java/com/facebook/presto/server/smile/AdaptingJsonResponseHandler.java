@@ -18,11 +18,9 @@ import com.facebook.airlift.http.client.Request;
 import com.facebook.airlift.http.client.Response;
 import com.facebook.airlift.http.client.ResponseHandler;
 import com.facebook.airlift.json.JsonCodec;
-import com.facebook.airlift.log.Logger;
 
 import static com.facebook.airlift.http.client.FullJsonResponseHandler.createFullJsonResponseHandler;
 import static com.facebook.presto.server.smile.JsonResponseWrapper.wrapJsonResponse;
-import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 /**
@@ -33,7 +31,6 @@ import static java.util.Objects.requireNonNull;
 public class AdaptingJsonResponseHandler<T>
         implements ResponseHandler<BaseResponse<T>, RuntimeException>
 {
-    private static final Logger log = Logger.get(AdaptingJsonResponseHandler.class);
     private final FullJsonResponseHandler<T> jsonResponseHandler;
 
     private AdaptingJsonResponseHandler(FullJsonResponseHandler<T> jsonResponseHandler)
@@ -58,7 +55,6 @@ public class AdaptingJsonResponseHandler<T>
             throws RuntimeException
     {
         FullJsonResponseHandler.JsonResponse<T> jresp = jsonResponseHandler.handle(request, response);
-        log.error(format("NIKHIL json response received: %s", jresp.toString()));
         return wrapJsonResponse(jresp);
     }
 }
