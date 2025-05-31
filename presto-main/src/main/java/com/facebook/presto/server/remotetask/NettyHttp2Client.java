@@ -74,9 +74,7 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -348,15 +346,16 @@ public class NettyHttp2Client
     private static class Http2ClientStreamFrameResponseHandler
             extends SimpleChannelInboundHandler<Http2StreamFrame>
     {
-        private List<Http2StreamFrame> frames = new ArrayList<>();
-        private SettableFuture future;
-        private ResponseHandler responseHandler;
-        private Http2StreamChannel streamChannel;
-        private Channel channel;
-        private ChannelPool pool;
-        private Map<Channel, Integer> channelStreamCountMap;
+        private final SettableFuture future;
+        private final ResponseHandler responseHandler;
+        private final Http2StreamChannel streamChannel;
+        private final Channel channel;
+        private final ChannelPool pool;
+        private final Map<Channel, Integer> channelStreamCountMap;
         private ByteBuf accumulatedData;
-        Http2Headers headers = null;
+        private int statusCode;
+        private int contentLength;
+        ListMultimap<HeaderName, String> finalHeaders;
 
         public Http2ClientStreamFrameResponseHandler(
                 SettableFuture listenableFuture,
@@ -372,13 +371,7 @@ public class NettyHttp2Client
             this.channel = channel;
             this.pool = pool;
             this.channelStreamCountMap = channelStreamCountMap;
-        }
-
-        @Override
-        public void handlerAdded(ChannelHandlerContext ctx)
-        {
-            // Initialize the buffer when the handler is added to the pipeline
-            accumulatedData = ctx.alloc().buffer();
+            this.finalHeaders = ArrayListMultimap.create();
         }
 
         @Override
@@ -387,7 +380,28 @@ public class NettyHttp2Client
         {
             log.error(format("NIKHIL Received HTTP/2 'stream' frame: %s", msg));
 
-            frames.add(msg);
+            if (msg instanceof Http2HeadersFrame) {
+                Http2Headers headers = ((Http2HeadersFrame) msg).headers();
+                statusCode = Integer.parseInt(headers.status().toString());
+                for (Entry<CharSequence, CharSequence> entry : headers) {
+                    if (entry.getKey().toString().equalsIgnoreCase("content-length")) {
+                        contentLength = Integer.parseInt(entry.getValue().toString());
+                        finalHeaders.put(HeaderName.of("Content-Length"), entry.getValue().toString());
+                        log.error(format("NIKHIL content length: %d", contentLength));
+                    }
+                    else if (entry.getKey().toString().equalsIgnoreCase("Content-Type")) {
+                        finalHeaders.put(HeaderName.of("Content-Type"), entry.getValue().toString());
+                    }
+                    else {
+                        finalHeaders.put(HeaderName.of(entry.getKey().toString()), entry.getValue().toString());
+                    }
+                }
+            }
+            else if (msg instanceof Http2DataFrame) {
+                // so that bytebuf is not released outside of this method scope
+                accumulatedData = ((Http2DataFrame) msg).content().retain();
+            }
+
             if ((msg instanceof Http2DataFrame && ((Http2DataFrame) msg).isEndStream()) ||
                     (msg instanceof Http2HeadersFrame && ((Http2HeadersFrame) msg).isEndStream())) {
                 constructResponse();
@@ -397,35 +411,6 @@ public class NettyHttp2Client
         private void constructResponse()
                 throws Exception
         {
-            int statusCode = -1;
-            int contentLength = 0;
-            Http2Headers headers = null;
-
-            StringBuilder inf = new StringBuilder();
-            int i = 1;
-            for (Http2StreamFrame frame : frames) {
-                if (frame instanceof Http2HeadersFrame) {
-                    headers = ((Http2HeadersFrame) frame).headers();
-                    statusCode = Integer.parseInt(headers.status().toString());
-                    for (Entry<CharSequence, CharSequence> entry : headers) {
-                        if (entry.getKey().toString().equalsIgnoreCase("content-length")) {
-                            contentLength = Integer.parseInt(entry.getValue().toString());
-                            log.error(format("NIKHIL content length: %d", contentLength));
-                            inf.append(format(" HeaderFrame:%d contentLength:%d", i, contentLength));
-                        }
-                    }
-                }
-                else if (frame instanceof Http2DataFrame) {
-                    ByteBuf frameContent = ((Http2DataFrame) frame).content().retain();
-                    inf.append(format(" DataFrameFrame:%d dataFrameLength:%d", i, frameContent.readableBytes()));
-                    accumulatedData.writeBytes(frameContent);
-                    frameContent.release();
-                }
-                i++;
-            }
-
-            log.error(format("NIKHIL frames details: %s", inf));
-
             byte[] contentResult = new byte[contentLength];
             try {
                 if (accumulatedData != null) {
@@ -434,55 +419,37 @@ public class NettyHttp2Client
                 }
             }
             catch (Exception e) {
-                log.error("NIKHIL failed when trying to print response; accumulatedData.readableBytes=%d errorMessage:" + accumulatedData.readableBytes(), e.getMessage());
+                log.error(format("NIKHIL failed when trying to print response; accumulatedData.readableBytes=%d errorMessage: %s", accumulatedData.readableBytes(), e.getMessage()));
             }
 
             if (statusCode == 200) {
                 log.error(format("NIKHIL received 200 status OK, contentResult:%s", new String(contentResult, StandardCharsets.UTF_8)));
-                int finalStatusCode = statusCode;
-                int finalContentLength = contentLength;
-
-                ByteBuf finalContent = accumulatedData;
-                Http2Headers finalHeaders = headers;
                 boolean result = future.set(responseHandler.handle(null, new Response()
                 {
                     @Override
                     public int getStatusCode()
                     {
-                        return finalStatusCode;
+                        return statusCode;
                     }
 
                     @Override
                     public ListMultimap<HeaderName, String> getHeaders()
                     {
-                        ListMultimap<HeaderName, String> result = ArrayListMultimap.create();
-                        Iterator<Entry<CharSequence, CharSequence>> iterator = finalHeaders.iterator();
-                        while (iterator.hasNext()) {
-                            Entry<CharSequence, CharSequence> entry = iterator.next();
-                            if (entry.getKey().toString().equalsIgnoreCase("Content-Type")) {
-                                result.put(HeaderName.of("Content-Type"), entry.getValue().toString());
-                            }
-                            else if (entry.getKey().toString().equalsIgnoreCase("Content-Length")) {
-                                result.put(HeaderName.of("Content-Length"), entry.getValue().toString());
-                            }
-                            else {
-                                result.put(HeaderName.of(entry.getKey().toString()), entry.getValue().toString());
-                            }
-                        }
-                        return result;
+                        return finalHeaders;
                     }
 
                     @Override
                     public long getBytesRead()
                     {
-                        return finalContentLength;
+                        return contentLength;
                     }
 
                     @Override
                     public InputStream getInputStream()
                             throws IOException
                     {
-                        return new ByteBufInputStream(finalContent);
+                        // release the bytebuf when the input stream is closed, else memory will leak
+                        return new ByteBufInputStream(accumulatedData, true);
                     }
                 }));
             }
