@@ -355,6 +355,8 @@ public class NettyHttp2Client
         private Channel channel;
         private ChannelPool pool;
         private Map<Channel, Integer> channelStreamCountMap;
+        private ByteBuf accumulatedData;
+        Http2Headers headers = null;
 
         public Http2ClientStreamFrameResponseHandler(
                 SettableFuture listenableFuture,
@@ -370,6 +372,13 @@ public class NettyHttp2Client
             this.channel = channel;
             this.pool = pool;
             this.channelStreamCountMap = channelStreamCountMap;
+        }
+
+        @Override
+        public void handlerAdded(ChannelHandlerContext ctx)
+        {
+            // Initialize the buffer when the handler is added to the pipeline
+            accumulatedData = ctx.alloc().buffer();
         }
 
         @Override
@@ -389,10 +398,11 @@ public class NettyHttp2Client
                 throws Exception
         {
             int statusCode = -1;
-            ByteBuf content = null;
             int contentLength = 0;
             Http2Headers headers = null;
 
+            StringBuilder inf = new StringBuilder();
+            int i = 1;
             for (Http2StreamFrame frame : frames) {
                 if (frame instanceof Http2HeadersFrame) {
                     headers = ((Http2HeadersFrame) frame).headers();
@@ -401,26 +411,38 @@ public class NettyHttp2Client
                         if (entry.getKey().toString().equalsIgnoreCase("content-length")) {
                             contentLength = Integer.parseInt(entry.getValue().toString());
                             log.error(format("NIKHIL content length: %d", contentLength));
+                            inf.append(format(" HeaderFrame:%d contentLength:%d", i, contentLength));
                         }
                     }
                 }
                 else if (frame instanceof Http2DataFrame) {
-                    content = ((Http2DataFrame) frame).content();
+                    ByteBuf frameContent = ((Http2DataFrame) frame).content().retain();
+                    inf.append(format(" DataFrameFrame:%d dataFrameLength:%d", i, frameContent.readableBytes()));
+                    accumulatedData.writeBytes(frameContent);
+                    frameContent.release();
                 }
+                i++;
             }
 
+            log.error(format("NIKHIL frames details: %s", inf));
+
             byte[] contentResult = new byte[contentLength];
-            if (content != null) {
-                content.getBytes(0, contentResult, 0, contentLength);
-                log.error(format("NIKHIL content.readableBytes: %d, contentLength: %d, content: %s", content.readableBytes(), contentLength, new String(contentResult, StandardCharsets.UTF_8)));
+            try {
+                if (accumulatedData != null) {
+                    accumulatedData.getBytes(0, contentResult, 0, contentLength);
+                    log.error(format("NIKHIL accumulatedData.readableBytes: %d, contentLength: %d, content: %s", accumulatedData.readableBytes(), contentLength, new String(contentResult, StandardCharsets.UTF_8)));
+                }
+            }
+            catch (Exception e) {
+                log.error("NIKHIL failed when trying to print response; accumulatedData.readableBytes=%d errorMessage:" + accumulatedData.readableBytes(), e.getMessage());
             }
 
             if (statusCode == 200) {
-                log.error(format("NIKHIL received 200 status OK, content:%s", new String(contentResult, StandardCharsets.UTF_8)));
+                log.error(format("NIKHIL received 200 status OK, contentResult:%s", new String(contentResult, StandardCharsets.UTF_8)));
                 int finalStatusCode = statusCode;
                 int finalContentLength = contentLength;
 
-                ByteBuf finalContent = content;
+                ByteBuf finalContent = accumulatedData;
                 Http2Headers finalHeaders = headers;
                 boolean result = future.set(responseHandler.handle(null, new Response()
                 {
