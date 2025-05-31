@@ -72,7 +72,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
-import java.nio.charset.StandardCharsets;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.List;
@@ -356,6 +355,7 @@ public class NettyHttp2Client
         private int statusCode;
         private int contentLength;
         ListMultimap<HeaderName, String> finalHeaders;
+        private int resultFrameCount;
 
         public Http2ClientStreamFrameResponseHandler(
                 SettableFuture listenableFuture,
@@ -378,6 +378,7 @@ public class NettyHttp2Client
         protected void channelRead0(ChannelHandlerContext ctx, Http2StreamFrame msg)
                 throws Exception
         {
+            resultFrameCount++;
             log.error(format("NIKHIL Received HTTP/2 'stream' frame: %s", msg));
 
             if (msg instanceof Http2HeadersFrame) {
@@ -386,6 +387,7 @@ public class NettyHttp2Client
                 for (Entry<CharSequence, CharSequence> entry : headers) {
                     if (entry.getKey().toString().equalsIgnoreCase("content-length")) {
                         contentLength = Integer.parseInt(entry.getValue().toString());
+                        accumulatedData = ctx.alloc().directBuffer(contentLength);
                         finalHeaders.put(HeaderName.of("Content-Length"), entry.getValue().toString());
                         log.error(format("NIKHIL content length: %d", contentLength));
                     }
@@ -398,8 +400,12 @@ public class NettyHttp2Client
                 }
             }
             else if (msg instanceof Http2DataFrame) {
-                // so that bytebuf is not released outside of this method scope
-                accumulatedData = ((Http2DataFrame) msg).content().retain();
+                try {
+                    accumulatedData.writeBytes(((Http2DataFrame) msg).content());
+                }
+                catch (Exception e) {
+                    log.error(format("NIKHIL failed while copying into accumulatedData. error= %s", e.getMessage()));
+                }
             }
 
             if ((msg instanceof Http2DataFrame && ((Http2DataFrame) msg).isEndStream()) ||
@@ -411,19 +417,14 @@ public class NettyHttp2Client
         private void constructResponse()
                 throws Exception
         {
-            byte[] contentResult = new byte[contentLength];
-            try {
-                if (accumulatedData != null) {
-                    accumulatedData.getBytes(0, contentResult, 0, contentLength);
-                    log.error(format("NIKHIL accumulatedData.readableBytes: %d, contentLength: %d, content: %s", accumulatedData.readableBytes(), contentLength, new String(contentResult, StandardCharsets.UTF_8)));
-                }
-            }
-            catch (Exception e) {
-                log.error(format("NIKHIL failed when trying to print response; accumulatedData.readableBytes=%d errorMessage: %s", accumulatedData.readableBytes(), e.getMessage()));
+            log.error(format("NIKHIL total frame count=%d", resultFrameCount));
+
+            if (resultFrameCount > 2 || contentLength != accumulatedData.readableBytes()) {
+                log.error(format("NIKHIL contentLength and content bytebuf differ in length; accumulatedData.readableBytes=%d contentLength=%d frameCount=%d", accumulatedData.readableBytes(), contentLength, resultFrameCount));
             }
 
             if (statusCode == 200) {
-                log.error(format("NIKHIL received 200 status OK, contentResult:%s", new String(contentResult, StandardCharsets.UTF_8)));
+                log.error("NIKHIL received 200 status OK");
                 boolean result = future.set(responseHandler.handle(null, new Response()
                 {
                     @Override
