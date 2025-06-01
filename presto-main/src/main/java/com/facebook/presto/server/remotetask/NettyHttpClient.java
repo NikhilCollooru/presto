@@ -122,7 +122,7 @@ public class NettyHttpClient
                     .build();
         }
         catch (Exception e) {
-            log.error(format("NIKHIL error during bootstrap creation, Details: %s", e.getMessage()));
+            log.info(format("NIKHIL error during bootstrap creation, Details: %s", e.getMessage()));
         }
 
         int maxConnectionsPerDestination = config.getNettyMaxConnectionsPerDestination();

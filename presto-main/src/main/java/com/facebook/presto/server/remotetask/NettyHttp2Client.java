@@ -145,7 +145,7 @@ public class NettyHttp2Client
                     .build();
         }
         catch (Exception e) {
-            log.error(format("NIKHIL error during bootstrap creation, Details: %s", e.getMessage()));
+            log.info(format("NIKHIL error during bootstrap creation, Details: %s", e.getMessage()));
         }
 
         int maxConnectionsPerDestination = config.getNettyMaxConnectionsPerDestination();
@@ -210,7 +210,6 @@ public class NettyHttp2Client
                         // create a stream channel from channel
                         Http2StreamChannelBootstrap streamChannelBootstrap = new Http2StreamChannelBootstrap(channel);
                         Http2StreamChannel streamChannel = streamChannelBootstrap.open().syncUninterruptibly().getNow();
-                        log.error("NIKHIL stream created");
 
                         // Increment stream count
                         channelStreamCountMap.put(channel, channelStreamCountMap.getOrDefault(channel, 0) + 1);
@@ -228,14 +227,14 @@ public class NettyHttp2Client
                                 headers.set(entry.getKey().toLowerCase(Locale.ROOT), entry.getValue());
                             }
                             catch (Exception e) {
-                                log.error(format("NIKHIL failed setting header: %s. skipping it", entry.getKey()));
+                                log.info(format("NIKHIL failed setting header: %s. skipping it", entry.getKey()));
                             }
                         }
 
                         if (request.getMethod().equals("GET")) {
                             headers.method("GET");
                             DefaultHttp2HeadersFrame hfr = new DefaultHttp2HeadersFrame(headers, true);
-                            log.error(format("NIKHIL GET http2HeaderFrame: %s, request: %s", hfr, request));
+                            log.info(format("NIKHIL GET http2HeaderFrame: %s, request: %s", hfr, request));
                             // Send headers-only request
                             streamChannel.writeAndFlush(hfr);
                         }
@@ -246,28 +245,28 @@ public class NettyHttp2Client
                             streamChannel.write(hfr);
                             byte[] payload = ((StaticBodyGenerator) request.getBodyGenerator()).getBody();
                             DefaultHttp2DataFrame dfr = new DefaultHttp2DataFrame(Unpooled.copiedBuffer(payload), true);
-                            log.error(format("NIKHIL POST request: %s,  http2HeaderFrame: %s, http2DataFrame: %s", request, hfr, dfr));
+                            log.info(format("NIKHIL POST request: %s,  http2HeaderFrame: %s, http2DataFrame: %s", request, hfr, dfr));
                             streamChannel.writeAndFlush(dfr);
                         }
 
                         int streamCount = channelStreamCountMap.getOrDefault(channel, 0);
                         if (streamCount < nettyMaxStreamPerChannel) {
-                            log.error(format("NIKHIL releasing channel back to pool. streamCount: %d", streamCount));
+                            log.info(format("NIKHIL releasing channel back to pool. streamCount: %d", streamCount));
                             channel.attr(IN_POOL).set(true);
                             pool.release(channel);
                         }
                         else {
-                            log.error(format("NIKHIL NOT releasing channel back to pool. streamCount: %d", streamCount));
+                            log.info(format("NIKHIL NOT releasing channel back to pool. streamCount: %d", streamCount));
                         }
                     }
                     else {
-                        log.error(format("NIKHIL failed to acquire a channel from the pool. reason: %s", f.cause().getMessage()));
+                        log.info(format("NIKHIL failed to acquire a channel from the pool. reason: %s", f.cause().getMessage()));
                     }
                 }
             });
         }
         catch (Exception e) {
-            log.error(format("NIKHIL http request send failure for %s. Message: %s", address.toString(), e.getMessage()));
+            log.info(format("NIKHIL http request send failure for %s. Message: %s", address.toString(), e.getMessage()));
         }
 
         return new HttpResponseFuture()
@@ -379,7 +378,7 @@ public class NettyHttp2Client
                 throws Exception
         {
             resultFrameCount++;
-            log.error(format("NIKHIL Received HTTP/2 'stream' frame: %s", msg));
+            log.info(format("NIKHIL Received HTTP/2 'stream' frame: %s", msg));
 
             if (msg instanceof Http2HeadersFrame) {
                 Http2Headers headers = ((Http2HeadersFrame) msg).headers();
@@ -387,9 +386,8 @@ public class NettyHttp2Client
                 for (Entry<CharSequence, CharSequence> entry : headers) {
                     if (entry.getKey().toString().equalsIgnoreCase("content-length")) {
                         contentLength = Integer.parseInt(entry.getValue().toString());
-                        accumulatedData = ctx.alloc().directBuffer(contentLength);
+                        accumulatedData = ctx.alloc().buffer(contentLength);
                         finalHeaders.put(HeaderName.of("Content-Length"), entry.getValue().toString());
-                        log.error(format("NIKHIL content length: %d", contentLength));
                     }
                     else if (entry.getKey().toString().equalsIgnoreCase("Content-Type")) {
                         finalHeaders.put(HeaderName.of("Content-Type"), entry.getValue().toString());
@@ -404,7 +402,7 @@ public class NettyHttp2Client
                     accumulatedData.writeBytes(((Http2DataFrame) msg).content());
                 }
                 catch (Exception e) {
-                    log.error(format("NIKHIL failed while copying into accumulatedData. error= %s", e.getMessage()));
+                    log.info(format("NIKHIL failed while copying into accumulatedData. error= %s", e.getMessage()));
                 }
             }
 
@@ -417,14 +415,11 @@ public class NettyHttp2Client
         private void constructResponse()
                 throws Exception
         {
-            log.error(format("NIKHIL total frame count=%d", resultFrameCount));
-
             if (resultFrameCount > 2 || contentLength != accumulatedData.readableBytes()) {
-                log.error(format("NIKHIL contentLength and content bytebuf differ in length; accumulatedData.readableBytes=%d contentLength=%d frameCount=%d", accumulatedData.readableBytes(), contentLength, resultFrameCount));
+                log.info(format("NIKHIL contentLength and content bytebuf differ in length; accumulatedData.readableBytes=%d contentLength=%d frameCount=%d", accumulatedData.readableBytes(), contentLength, resultFrameCount));
             }
 
             if (statusCode == 200) {
-                log.error("NIKHIL received 200 status OK");
                 boolean result = future.set(responseHandler.handle(null, new Response()
                 {
                     @Override
@@ -455,7 +450,7 @@ public class NettyHttp2Client
                 }));
             }
             else {
-                log.error(format("NIKHIL received non 200 OK status: %d", statusCode));
+                log.info(format("NIKHIL received non 200 OK status: %d", statusCode));
                 future.set(null);
             }
 
@@ -467,7 +462,7 @@ public class NettyHttp2Client
 
             // release channel if NOT released earlier
             if (!channel.attr(IN_POOL).get()) {
-                log.error("NIKHIL ResponseHandler : releasing channel back to pool");
+                log.info("NIKHIL ResponseHandler : releasing channel back to pool");
                 channel.attr(IN_POOL).set(true);
                 pool.release(channel);
             }
