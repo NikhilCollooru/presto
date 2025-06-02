@@ -377,38 +377,46 @@ public class NettyHttp2Client
         protected void channelRead0(ChannelHandlerContext ctx, Http2StreamFrame msg)
                 throws Exception
         {
-            resultFrameCount++;
-            log.info(format("NIKHIL Received HTTP/2 'stream' frame: %s", msg));
+            try {
+                resultFrameCount++;
+                log.info(format("NIKHIL Received HTTP/2 'stream' frame: %s", msg));
 
-            if (msg instanceof Http2HeadersFrame) {
-                Http2Headers headers = ((Http2HeadersFrame) msg).headers();
-                statusCode = Integer.parseInt(headers.status().toString());
-                for (Entry<CharSequence, CharSequence> entry : headers) {
-                    if (entry.getKey().toString().equalsIgnoreCase("content-length")) {
-                        contentLength = Integer.parseInt(entry.getValue().toString());
-                        accumulatedData = ctx.alloc().buffer(contentLength);
-                        finalHeaders.put(HeaderName.of("Content-Length"), entry.getValue().toString());
+                if (msg instanceof Http2HeadersFrame) {
+                    Http2Headers headers = ((Http2HeadersFrame) msg).headers();
+                    statusCode = Integer.parseInt(headers.status().toString());
+                    for (Entry<CharSequence, CharSequence> entry : headers) {
+                        if (entry.getKey().toString().equalsIgnoreCase("content-length")) {
+                            contentLength = Integer.parseInt(entry.getValue().toString());
+
+                            // allocate buffer to copy multiple dataframes content into this new allocated buffer
+                            accumulatedData = ctx.alloc().heapBuffer(contentLength);
+
+                            finalHeaders.put(HeaderName.of("Content-Length"), entry.getValue().toString());
+                        }
+                        else if (entry.getKey().toString().equalsIgnoreCase("Content-Type")) {
+                            finalHeaders.put(HeaderName.of("Content-Type"), entry.getValue().toString());
+                        }
+                        else {
+                            finalHeaders.put(HeaderName.of(entry.getKey().toString()), entry.getValue().toString());
+                        }
                     }
-                    else if (entry.getKey().toString().equalsIgnoreCase("Content-Type")) {
-                        finalHeaders.put(HeaderName.of("Content-Type"), entry.getValue().toString());
+                }
+                else if (msg instanceof Http2DataFrame) {
+                    try {
+                        accumulatedData.writeBytes(((Http2DataFrame) msg).content());
                     }
-                    else {
-                        finalHeaders.put(HeaderName.of(entry.getKey().toString()), entry.getValue().toString());
+                    catch (Exception e) {
+                        log.info(format("NIKHIL failed while copying into accumulatedData. error= %s", e.getMessage()));
                     }
+                }
+
+                if ((msg instanceof Http2DataFrame && ((Http2DataFrame) msg).isEndStream()) ||
+                        (msg instanceof Http2HeadersFrame && ((Http2HeadersFrame) msg).isEndStream())) {
+                    constructResponse();
                 }
             }
-            else if (msg instanceof Http2DataFrame) {
-                try {
-                    accumulatedData.writeBytes(((Http2DataFrame) msg).content());
-                }
-                catch (Exception e) {
-                    log.info(format("NIKHIL failed while copying into accumulatedData. error= %s", e.getMessage()));
-                }
-            }
-
-            if ((msg instanceof Http2DataFrame && ((Http2DataFrame) msg).isEndStream()) ||
-                    (msg instanceof Http2HeadersFrame && ((Http2HeadersFrame) msg).isEndStream())) {
-                constructResponse();
+            catch (Exception e) {
+                log.error(e, format("NIKHIL fail exception during channel read: %s", e.getMessage()));
             }
         }
 
@@ -420,34 +428,43 @@ public class NettyHttp2Client
             }
 
             if (statusCode == 200) {
-                boolean result = future.set(responseHandler.handle(null, new Response()
-                {
-                    @Override
-                    public int getStatusCode()
+                try {
+                    Object a = responseHandler.handle(null, new Response()
                     {
-                        return statusCode;
-                    }
+                        @Override
+                        public int getStatusCode()
+                        {
+                            return statusCode;
+                        }
 
-                    @Override
-                    public ListMultimap<HeaderName, String> getHeaders()
-                    {
-                        return finalHeaders;
-                    }
+                        @Override
+                        public ListMultimap<HeaderName, String> getHeaders()
+                        {
+                            return finalHeaders;
+                        }
 
-                    @Override
-                    public long getBytesRead()
-                    {
-                        return contentLength;
-                    }
+                        @Override
+                        public long getBytesRead()
+                        {
+                            return contentLength;
+                        }
 
-                    @Override
-                    public InputStream getInputStream()
-                            throws IOException
-                    {
-                        // release the bytebuf when the input stream is closed, else memory will leak
-                        return new ByteBufInputStream(accumulatedData, true);
-                    }
-                }));
+                        @Override
+                        public InputStream getInputStream()
+                                throws IOException
+                        {
+                            // release the bytebuf when the input stream is closed, else memory will leak
+                            // Update : the FullJsonResponseHandler is not calling release. so using heap buffer for now. to get it working.
+                            return new ByteBufInputStream(accumulatedData, true);
+                        }
+                    });
+                    log.info(format("NIKHIL json response successfully deserialized: %s", a.toString()));
+                    future.set(a);
+                }
+                catch (Exception e) {
+                    log.error(e, format("NIKHIL fail error during deserialization: %s", e.getMessage()));
+                    future.set(null);
+                }
             }
             else {
                 log.info(format("NIKHIL received non 200 OK status: %d", statusCode));
